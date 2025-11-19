@@ -1,0 +1,15 @@
+asgiref==3.10.0
+Django==5.0
+django-cors-headers==4.9.0
+django-extensions==4.1
+django-filter==25.1
+djangorestframework==3.16.1
+jieba==0.42.1
+pypinyin==0.55.0
+sqlparse==0.5.3
+typing_extensions==4.15.0
+
+# 测试依赖
+pytest==8.0.0
+pytest-django==4.8.0
+pytest-cov==4.1.0
