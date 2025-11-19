@@ -34,6 +34,18 @@
               v-model="form.password"
               type="password"
               required
+              minlength="6"
+              class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+            />
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">确认密码</label>
+            <input
+              v-model="form.password_confirm"
+              type="password"
+              required
+              minlength="6"
               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
             />
           </div>
@@ -63,16 +75,34 @@ import { useUserStore } from '@/stores/user'
 const router = useRouter()
 const userStore = useUserStore()
 
-const form = ref({ username: '', email: '', password: '' })
+const form = ref({ username: '', email: '', password: '', password_confirm: '' })
 const error = ref('')
 const isLoading = ref(false)
 
 async function handleRegister() {
   error.value = ''
+
+  // 验证密码匹配
+  if (form.value.password !== form.value.password_confirm) {
+    error.value = '两次输入的密码不一致'
+    return
+  }
+
+  // 验证密码长度
+  if (form.value.password.length < 6) {
+    error.value = '密码长度至少需要6个字符'
+    return
+  }
+
   isLoading.value = true
 
   try {
-    const result = await userStore.register(form.value.username, form.value.email, form.value.password)
+    const result = await userStore.register(
+      form.value.username,
+      form.value.email,
+      form.value.password,
+      form.value.password_confirm
+    )
     if (result.success) {
       router.push('/')
     } else {

@@ -28,12 +28,13 @@ export const useUserStore = defineStore('user', {
       }
     },
 
-    async register(username, email, password) {
+    async register(username, email, password, password_confirm) {
       try {
         const response = await axios.post('/api/auth/register/', {
           username,
           email,
-          password
+          password,
+          password_confirm
         })
 
         this.user = response.data.user
@@ -44,7 +45,7 @@ export const useUserStore = defineStore('user', {
       } catch (error) {
         return {
           success: false,
-          error: error.response?.data?.error || '注册失败'
+          error: error.response?.data?.error || error.response?.data?.detail || '注册失败'
         }
       }
     },
