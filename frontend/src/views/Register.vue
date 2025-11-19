@@ -34,7 +34,7 @@
               v-model="form.password"
               type="password"
               required
-              minlength="6"
+              minlength="8"
               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
             />
           </div>
@@ -45,7 +45,7 @@
               v-model="form.password_confirm"
               type="password"
               required
-              minlength="6"
+              minlength="8"
               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
             />
           </div>
@@ -89,8 +89,8 @@ async function handleRegister() {
   }
 
   // 验证密码长度
-  if (form.value.password.length < 6) {
-    error.value = '密码长度至少需要6个字符'
+  if (form.value.password.length < 8) {
+    error.value = '密码长度至少需要8个字符'
     return
   }
 
