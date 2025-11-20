@@ -4,7 +4,7 @@
     <nav class="bg-white shadow-sm">
       <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
         <div class="flex justify-between items-center">
-          <h1 class="text-2xl font-bold text-primary-600">RPD 词汇学习</h1>
+          <h1 class="text-2xl font-bold text-primary-600">词汇学习</h1>
           <div class="flex items-center space-x-4">
             <span class="text-gray-700">{{ userStore.user?.username }}</span>
             <button @click="handleLogout" class="text-gray-600 hover:text-gray-900">
@@ -62,15 +62,15 @@
       <!-- 快速统计 -->
       <div class="mt-12 grid grid-cols-1 md:grid-cols-3 gap-6">
         <div class="bg-white rounded-lg shadow p-6">
-          <div class="text-3xl font-bold text-primary-600 mb-2">-</div>
+          <div class="text-3xl font-bold text-primary-600 mb-2">{{ stats.due_today }}</div>
           <div class="text-gray-600">今日待复习</div>
         </div>
         <div class="bg-white rounded-lg shadow p-6">
-          <div class="text-3xl font-bold text-green-600 mb-2">-</div>
+          <div class="text-3xl font-bold text-green-600 mb-2">{{ stats.total_cards }}</div>
           <div class="text-gray-600">总卡片数</div>
         </div>
         <div class="bg-white rounded-lg shadow p-6">
-          <div class="text-3xl font-bold text-blue-600 mb-2">-</div>
+          <div class="text-3xl font-bold text-blue-600 mb-2">{{ stats.streak }}</div>
           <div class="text-gray-600">连续打卡</div>
         </div>
       </div>
@@ -79,11 +79,28 @@
 </template>
 
 <script setup>
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
+import axios from 'axios'
 
 const router = useRouter()
 const userStore = useUserStore()
+
+const stats = ref({
+  due_today: 0,
+  total_cards: 0,
+  streak: 0
+})
+
+onMounted(async () => {
+  try {
+    const response = await axios.get('/api/cards/stats/')
+    stats.value = response.data
+  } catch (err) {
+    console.error('Failed to load stats:', err)
+  }
+})
 
 async function handleLogout() {
   await userStore.logout()

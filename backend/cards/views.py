@@ -126,6 +126,48 @@ class CardViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(cards, many=True)
         return Response(serializer.data)
 
+    @action(detail=False, methods=['get'])
+    def stats(self, request):
+        """获取用户卡片统计信息"""
+        from django.utils import timezone
+        from django.db.models import Count
+        from datetime import timedelta
+
+        user_cards = self.get_queryset()
+        today = timezone.now().date()
+
+        # 今日待复习数量
+        due_today = user_cards.filter(
+            due_at__date__lte=today,
+            state__in=['learning', 'review']
+        ).count()
+
+        # 新卡片数量
+        new_cards = user_cards.filter(state='new').count()
+
+        # 总卡片数
+        total_cards = user_cards.count()
+
+        # 计算连续打卡天数
+        review_logs = ReviewLog.objects.filter(user=request.user).values('reviewed_at__date').distinct().order_by('-reviewed_at__date')
+        streak = 0
+        check_date = today
+
+        for log in review_logs:
+            log_date = log['reviewed_at__date']
+            if log_date == check_date:
+                streak += 1
+                check_date -= timedelta(days=1)
+            elif log_date < check_date:
+                break
+
+        return Response({
+            'due_today': due_today,
+            'new_cards': new_cards,
+            'total_cards': total_cards,
+            'streak': streak
+        })
+
 
 class ReviewLogViewSet(viewsets.ReadOnlyModelViewSet):
     """复习记录 ViewSet（只读）"""
@@ -279,66 +321,87 @@ def lookup_english(request, word):
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def lookup_hanzi(request, char):
-    """查询汉字"""
+    """
+    查询汉字 - 四层降级策略
+    L1: 缓存 (cache)
+    L2: 本地字典库 (local-dict)
+    L3: 百度汉语API (baidu-hanyu)
+    L4: 手动输入 (manual)
+    """
     import sqlite3
     from django.conf import settings
     from django.core.cache import cache
     import os
+    from .services.baidu_hanyu import BaiduHanyuService
 
-    # 尝试从缓存获取
+    # L1: 尝试从缓存获取
     cache_key = f'dict:zh:{char}'
     cached_result = cache.get(cache_key)
     if cached_result:
         cached_result['source'] = 'cache'
         return Response(cached_result)
 
-    # 从汉字数据库查询
+    # L2: 从本地汉字数据库查询
     hanzi_db_path = os.path.join(settings.BASE_DIR.parent, 'data', 'hanzi_local.db')
 
-    if not os.path.exists(hanzi_db_path):
-        return Response({
-            'error': 'Hanzi database not found'
-        }, status=status.HTTP_404_NOT_FOUND)
+    local_result = None
+    if os.path.exists(hanzi_db_path):
+        try:
+            conn = sqlite3.connect(hanzi_db_path)
+            cursor = conn.cursor()
 
+            # 查询汉字（表结构: char, pinyin, radical, strokes, frequency, meaning, examples）
+            cursor.execute(
+                "SELECT * FROM hanzi WHERE char = ?",
+                (char,)
+            )
+            row = cursor.fetchone()
+            conn.close()
+
+            if row:
+                # 解析数据
+                local_result = {
+                    'char': row[0],
+                    'pinyin': row[1].split(',') if row[1] else [],  # 多音字数组
+                    'radical': row[2] if len(row) > 2 else '',
+                    'strokes': row[3] if len(row) > 3 else 0,
+                    'frequency': row[4] if len(row) > 4 else 0,
+                    'meaning_zh': row[5] if len(row) > 5 else '',
+                    'examples': row[6].split('|') if len(row) > 6 and row[6] else [],
+                    'source': 'local-dict'
+                }
+
+                # 缓存结果（1天）
+                cache.set(cache_key, local_result, timeout=86400)
+
+                return Response(local_result)
+
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"本地汉字数据库查询失败: {e}")
+
+    # L3: 本地未找到,调用百度汉语API
     try:
-        conn = sqlite3.connect(hanzi_db_path)
-        cursor = conn.cursor()
+        baidu_result = BaiduHanyuService.lookup(char)
 
-        # 查询汉字（表结构: char, pinyin, radical, strokes, frequency, meaning, examples）
-        cursor.execute(
-            "SELECT * FROM hanzi WHERE char = ?",
-            (char,)
-        )
-        row = cursor.fetchone()
-        conn.close()
+        if baidu_result:
+            # 缓存结果（1天）
+            cache.set(cache_key, baidu_result, timeout=86400)
 
-        if not row:
-            return Response({
-                'error': 'Character not found',
-                'source': 'manual'
-            }, status=status.HTTP_404_NOT_FOUND)
-
-        # 解析数据
-        result = {
-            'char': row[0],
-            'pinyin': row[1].split(',') if row[1] else [],  # 多音字数组
-            'radical': row[2] if len(row) > 2 else '',
-            'strokes': row[3] if len(row) > 3 else 0,
-            'frequency': row[4] if len(row) > 4 else 0,
-            'meaning_zh': row[5] if len(row) > 5 else '',
-            'examples': row[6].split('|') if len(row) > 6 and row[6] else [],
-            'source': 'local-dict'
-        }
-
-        # 缓存结果（1天）
-        cache.set(cache_key, result, timeout=86400)
-
-        return Response(result)
+            return Response(baidu_result)
 
     except Exception as e:
-        return Response({
-            'error': str(e)
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"百度汉语查询失败: {e}")
+
+    # L4: 所有数据源均失败,返回手动输入提示
+    return Response({
+        'error': 'Character not found in any data source',
+        'source': 'manual',
+        'message': '未找到该字的字典信息,请手动输入释义'
+    }, status=status.HTTP_404_NOT_FOUND)
 
 
 @api_view(['POST'])

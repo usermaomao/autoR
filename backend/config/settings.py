@@ -134,9 +134,21 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",  # Vite dev server
     "http://localhost:3000",
+    "http://172.17.33.11:5173",  # WSL network IP
 ]
 
 CORS_ALLOW_CREDENTIALS = True
+
+# CSRF settings - 信任的跨域来源
+CSRF_TRUSTED_ORIGINS = [
+    "http://localhost:5173",
+    "http://localhost:3000",
+    "http://172.17.33.11:5173",  # WSL network IP
+]
+
+# Allow CSRF cookie to be sent in cross-origin requests
+CSRF_COOKIE_SAMESITE = 'Lax'
+SESSION_COOKIE_SAMESITE = 'Lax'
 
 # Django REST Framework settings
 REST_FRAMEWORK = {

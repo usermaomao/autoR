@@ -14,12 +14,37 @@
           <!-- 卡组选择 -->
           <div class="mb-6">
             <label class="block text-sm font-medium text-gray-700 mb-2">卡组</label>
-            <select v-model="form.deck_id" required class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
-              <option value="">请选择卡组</option>
-              <option v-for="deck in decks" :key="deck.id" :value="deck.id">
-                {{ deck.name }}
-              </option>
-            </select>
+
+            <!-- 没有卡组时的提示 -->
+            <div v-if="decks.length === 0" class="mb-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+              <div class="flex items-start">
+                <svg class="w-5 h-5 text-yellow-600 mr-2 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                  <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
+                </svg>
+                <div class="flex-1">
+                  <h3 class="text-sm font-medium text-yellow-800">您还没有创建任何卡组</h3>
+                  <p class="mt-1 text-sm text-yellow-700">请先创建一个卡组来存放您的卡片</p>
+                  <button
+                    type="button"
+                    @click="showQuickCreateDeck = true"
+                    class="mt-2 px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 text-sm"
+                  >
+                    快速创建卡组
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- 卡组选择下拉框 -->
+            <div v-else class="space-y-2">
+              <select v-model="form.deck" @change="handleDeckChange" required class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                <option value="">请选择卡组</option>
+                <option v-for="deck in decks" :key="deck.id" :value="deck.id">
+                  {{ deck.name }}
+                </option>
+                <option value="__create_new__">+ 新建卡组</option>
+              </select>
+            </div>
           </div>
 
           <!-- 类型选择 -->
@@ -127,7 +152,7 @@
           <div class="flex gap-4">
             <button
               type="submit"
-              :disabled="isSubmitting"
+              :disabled="isSubmitting || decks.length === 0"
               class="flex-1 bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
             >
               {{ isSubmitting ? '保存中...' : '保存卡片' }}
@@ -142,6 +167,57 @@
           </div>
         </form>
       </div>
+
+      <!-- 快速创建卡组对话框 -->
+      <div v-if="showQuickCreateDeck" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" @click.self="showQuickCreateDeck = false">
+        <div class="bg-white rounded-lg shadow-xl p-6 w-full max-w-md">
+          <h2 class="text-2xl font-bold mb-4">创建新卡组</h2>
+
+          <form @submit.prevent="handleQuickCreateDeck">
+            <div class="mb-4">
+              <label class="block text-sm font-medium text-gray-700 mb-2">卡组名称</label>
+              <input
+                v-model="newDeck.name"
+                type="text"
+                required
+                placeholder="例如: 四级词汇、常用汉字"
+                class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
+
+            <div class="mb-4">
+              <label class="block text-sm font-medium text-gray-700 mb-2">描述（可选）</label>
+              <textarea
+                v-model="newDeck.description"
+                rows="2"
+                placeholder="卡组的简短描述"
+                class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              ></textarea>
+            </div>
+
+            <div v-if="deckError" class="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+              {{ deckError }}
+            </div>
+
+            <div class="flex gap-3">
+              <button
+                type="submit"
+                :disabled="isCreatingDeck"
+                class="flex-1 bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 disabled:bg-gray-400"
+              >
+                {{ isCreatingDeck ? '创建中...' : '创建卡组' }}
+              </button>
+              <button
+                type="button"
+                @click="showQuickCreateDeck = false"
+                class="px-6 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
+              >
+                取消
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -155,7 +231,7 @@ import { lookupWord } from '@/services/dictService'
 const router = useRouter()
 
 const form = reactive({
-  deck_id: '',
+  deck: '',
   card_type: 'en',
   word: '',
   meaning: '',
@@ -172,21 +248,72 @@ const isLookingUp = ref(false)
 const isSubmitting = ref(false)
 const error = ref('')
 
+// 快速创建卡组相关状态
+const showQuickCreateDeck = ref(false)
+const isCreatingDeck = ref(false)
+const deckError = ref('')
+const newDeck = reactive({
+  name: '',
+  description: ''
+})
+
+// 监听卡组选择变化
+function handleDeckChange() {
+  if (form.deck === '__create_new__') {
+    form.deck = ''
+    showQuickCreateDeck.value = true
+  }
+}
+
 // 获取卡组列表
 onMounted(async () => {
   try {
-    const response = await axios.get('/api/cards/decks/')
-    decks.value = response.data
+    const response = await axios.get('/api/decks/')
+
+    // DRF返回分页格式: {count, results: [...]}
+    decks.value = response.data.results || response.data
 
     // 如果只有一个卡组，自动选中
     if (decks.value.length === 1) {
-      form.deck_id = decks.value[0].id
+      form.deck = decks.value[0].id
     }
   } catch (err) {
     console.error('Failed to load decks:', err)
     error.value = '加载卡组列表失败'
   }
 })
+
+// 快速创建卡组
+async function handleQuickCreateDeck() {
+  deckError.value = ''
+  isCreatingDeck.value = true
+
+  try {
+    const response = await axios.post('/api/decks/', {
+      name: newDeck.name,
+      description: newDeck.description,
+      daily_new_limit: 20,
+      daily_review_limit: 200
+    })
+
+    // 添加到卡组列表
+    decks.value.push(response.data)
+
+    // 自动选中新创建的卡组
+    form.deck = response.data.id
+
+    // 关闭对话框并重置表单
+    showQuickCreateDeck.value = false
+    newDeck.name = ''
+    newDeck.description = ''
+
+  } catch (err) {
+    console.error('Failed to create deck:', err)
+    deckError.value = err.response?.data?.detail || '创建卡组失败，请稍后重试'
+  } finally {
+    isCreatingDeck.value = false
+  }
+}
 
 // 字典查询和自动填充逻辑
 async function handleWordBlur() {
@@ -234,28 +361,55 @@ async function handleWordBlur() {
         // 中文字符
         const data = result.data
 
-        // 提取释义
-        if (data.definition) {
+        // 提取释义 (支持多种字段名)
+        if (data.meaning_zh) {
+          form.meaning = data.meaning_zh
+        } else if (data.definition) {
           form.meaning = data.definition
         }
 
-        // 4. 调用拼音推断API获取多音字候选项
-        try {
-          const pinyinResponse = await axios.post('/api/cards/dict/zh/infer-pinyin/', {
-            text: word
-          })
+        // 提取例句
+        if (data.examples && data.examples.length > 0) {
+          // 如果有多个例句,取前3个并用换行符连接
+          form.example = data.examples.slice(0, 3).join('\n')
+        }
 
-          if (pinyinResponse.data && pinyinResponse.data.candidates) {
-            pinyinCandidates.value = pinyinResponse.data.candidates
+        // 保存部首、笔画等元数据
+        if (data.radical) {
+          form.metadata.radical = data.radical
+        }
+        if (data.strokes) {
+          form.metadata.strokes = data.strokes
+        }
+        if (data.traditional) {
+          form.metadata.traditional = data.traditional
+        }
 
-            // 自动选择第一个拼音
-            if (pinyinCandidates.value.length > 0) {
-              form.metadata.pinyin = pinyinCandidates.value[0]
+        // 处理拼音 - 优先使用API返回的拼音
+        if (data.pinyin && data.pinyin.length > 0) {
+          pinyinCandidates.value = data.pinyin
+
+          // 自动选择第一个拼音
+          form.metadata.pinyin = data.pinyin[0]
+        } else {
+          // 如果API没有返回拼音,调用拼音推断API
+          try {
+            const pinyinResponse = await axios.post('/api/dict/zh/infer-pinyin/', {
+              text: word
+            })
+
+            if (pinyinResponse.data && pinyinResponse.data.candidates) {
+              pinyinCandidates.value = pinyinResponse.data.candidates
+
+              // 自动选择第一个拼音
+              if (pinyinCandidates.value.length > 0) {
+                form.metadata.pinyin = pinyinCandidates.value[0]
+              }
             }
+          } catch (pinyinErr) {
+            console.error('Failed to infer pinyin:', pinyinErr)
+            // 拼音推断失败不影响主流程
           }
-        } catch (pinyinErr) {
-          console.error('Failed to infer pinyin:', pinyinErr)
-          // 拼音推断失败不影响主流程
         }
       }
     } else {
@@ -276,18 +430,48 @@ function formatDictResult(data) {
   if (!data) return ''
 
   let html = ''
-  if (data.phonetic) {
-    html += `<div><strong>音标:</strong> ${data.phonetic}</div>`
+
+  // 英文单词字段
+  if (data.phonetic || data.ipa) {
+    html += `<div><strong>音标:</strong> ${data.phonetic || data.ipa}</div>`
   }
   if (data.translation) {
-    html += `<div><strong>释义:</strong> ${data.translation}</div>`
+    html += `<div><strong>翻译:</strong> ${data.translation}</div>`
+  }
+  if (data.meaning_en) {
+    html += `<div><strong>英文释义:</strong> ${data.meaning_en}</div>`
+  }
+
+  // 中文汉字字段
+  if (data.pinyin && Array.isArray(data.pinyin)) {
+    html += `<div><strong>拼音:</strong> ${data.pinyin.join(', ')}</div>`
+  }
+  if (data.meaning_zh) {
+    // 截取前200字符避免太长
+    const meaning = data.meaning_zh.length > 200
+      ? data.meaning_zh.substring(0, 200) + '...'
+      : data.meaning_zh
+    html += `<div><strong>释义:</strong> ${meaning}</div>`
   }
   if (data.definition) {
     html += `<div><strong>定义:</strong> ${data.definition}</div>`
   }
+  if (data.radical) {
+    html += `<div><strong>部首:</strong> ${data.radical}</div>`
+  }
+  if (data.strokes) {
+    html += `<div><strong>笔画:</strong> ${data.strokes}</div>`
+  }
+
+  // 例句
+  if (data.examples && data.examples.length > 0) {
+    const examplesList = data.examples.slice(0, 2).join('<br>')
+    html += `<div><strong>例句:</strong><br>${examplesList}</div>`
+  }
   if (data.example) {
     html += `<div><strong>例句:</strong> ${data.example}</div>`
   }
+
   return html
 }
 
@@ -304,7 +488,7 @@ async function handleSubmit() {
       .filter(t => t.length > 0)
 
     // 提交到后端
-    await axios.post('/api/cards/cards/', form)
+    await axios.post('/api/cards/', form)
 
     // 成功后跳转到卡片列表
     router.push('/cards')

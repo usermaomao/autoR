@@ -186,8 +186,8 @@ onMounted(async () => {
 
 async function loadDecks() {
   try {
-    const response = await axios.get('/api/cards/decks/')
-    decks.value = response.data
+    const response = await axios.get('/api/decks/')
+    decks.value = response.data.results || response.data
   } catch (err) {
     console.error('Failed to load decks:', err)
   }
@@ -203,11 +203,11 @@ async function loadCards() {
       page_size: pageSize
     }
 
-    if (filters.deck_id) params.deck_id = filters.deck_id
+    if (filters.deck_id) params.deck = filters.deck_id
     if (filters.card_type) params.card_type = filters.card_type
     if (filters.search) params.search = filters.search
 
-    const response = await axios.get('/api/cards/cards/', { params })
+    const response = await axios.get('/api/cards/', { params })
 
     cards.value = response.data.results || response.data
     totalCount.value = response.data.count || cards.value.length
@@ -257,7 +257,7 @@ async function handleDelete(card) {
   if (!confirm(`确定删除卡片"${card.word}"吗？`)) return
 
   try {
-    await axios.delete(`/api/cards/cards/${card.id}/`)
+    await axios.delete(`/api/cards/${card.id}/`)
     await loadCards()
   } catch (err) {
     console.error('Failed to delete card:', err)
@@ -271,7 +271,7 @@ async function handleBatchDelete() {
 
   try {
     await Promise.all(
-      selectedCards.value.map(id => axios.delete(`/api/cards/cards/${id}/`))
+      selectedCards.value.map(id => axios.delete(`/api/cards/${id}/`))
     )
     selectedCards.value = []
     await loadCards()
