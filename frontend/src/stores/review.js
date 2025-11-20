@@ -8,6 +8,7 @@ export const useReviewStore = defineStore('review', {
     currentIndex: 0,
     isLoading: false,
     reviewHistory: [],
+    queueStats: null,  // 队列统计信息
     stats: {
       completed: 0,
       correct: 0,
@@ -36,6 +37,7 @@ export const useReviewStore = defineStore('review', {
         })
 
         this.queue = response.data.cards
+        this.queueStats = response.data.stats  // 保存队列统计信息
         this.currentIndex = 0
         this.currentCard = this.queue[0] || null
         this.reviewHistory = []

@@ -24,6 +24,10 @@ urlpatterns = [
     path('dict/zh/<str:char>/', views.lookup_hanzi, name='lookup-hanzi'),
     path('dict/zh/infer-pinyin/', views.infer_pinyin, name='infer-pinyin'),
 
+    # 导入导出相关
+    path('cards/import/', views.import_cards, name='cards-import'),
+    path('cards/export/', views.export_cards, name='cards-export'),
+
     # ViewSet 路由
     path('', include(router.urls)),
 ]

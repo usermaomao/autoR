@@ -81,3 +81,54 @@ class ReviewLogSerializer(serializers.ModelSerializer):
         model = ReviewLog
         fields = '__all__'
         read_only_fields = ('id', 'user', 'reviewed_at')
+
+
+class CardImportSerializer(serializers.Serializer):
+    """卡片导入序列化器"""
+    file = serializers.FileField(required=True, help_text='CSV 或 JSON 文件')
+    format = serializers.ChoiceField(
+        choices=['csv', 'json'],
+        required=True,
+        help_text='文件格式'
+    )
+    deck_id = serializers.IntegerField(required=True, help_text='目标卡组ID')
+    card_type = serializers.ChoiceField(
+        choices=['en', 'zh'],
+        default='en',
+        help_text='卡片类型'
+    )
+    conflict_strategy = serializers.ChoiceField(
+        choices=['skip', 'overwrite', 'merge'],
+        default='skip',
+        help_text='冲突处理策略'
+    )
+
+    def validate_deck_id(self, value):
+        """验证卡组是否存在且属于当前用户"""
+        user = self.context.get('request').user
+        try:
+            deck = Deck.objects.get(id=value, user=user)
+        except Deck.DoesNotExist:
+            raise serializers.ValidationError('卡组不存在或无权访问')
+        return value
+
+    def validate_file(self, value):
+        """验证文件大小和类型"""
+        # 限制文件大小为 10MB
+        if value.size > 10 * 1024 * 1024:
+            raise serializers.ValidationError('文件大小不能超过 10MB')
+        return value
+
+
+class CardExportSerializer(serializers.Serializer):
+    """卡片导出序列化器"""
+    format = serializers.ChoiceField(
+        choices=['csv', 'json'],
+        default='csv',
+        help_text='导出格式'
+    )
+    deck_id = serializers.IntegerField(
+        required=False,
+        allow_null=True,
+        help_text='卡组ID（可选，不指定则导出所有）'
+    )

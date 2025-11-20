@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.0/ref/settings/
 """
 
+import os
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -20,12 +21,15 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/5.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-koo2q5fl@l+p2px4&5hq9=l%k97d*r3knvum4=i2^bzos3^$&u'
+SECRET_KEY = os.environ.get(
+    'DJANGO_SECRET_KEY',
+    'django-insecure-koo2q5fl@l+p2px4&5hq9=l%k97d*r3knvum4=i2^bzos3^$&u'  # 仅用于开发环境
+)
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.environ.get('DJANGO_DEBUG', 'True') == 'True'
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = os.environ.get('DJANGO_ALLOWED_HOSTS', 'localhost,127.0.0.1,172.17.33.11,0.0.0.0').split(',')
 
 
 # Application definition
@@ -131,24 +135,31 @@ STATIC_URL = 'static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # CORS settings
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",  # Vite dev server
-    "http://localhost:3000",
-    "http://172.17.33.11:5173",  # WSL network IP
-]
+# 从环境变量读取,默认值仅用于开发环境
+CORS_ALLOWED_ORIGINS = os.environ.get(
+    'DJANGO_CORS_ALLOWED_ORIGINS',
+    'http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000,http://172.17.33.11:5173'
+).split(',')
+
+# 开发环境允许所有来源（生产环境应该禁用）
+CORS_ALLOW_ALL_ORIGINS = DEBUG  # 仅在 DEBUG=True 时允许
 
 CORS_ALLOW_CREDENTIALS = True
 
 # CSRF settings - 信任的跨域来源
 CSRF_TRUSTED_ORIGINS = [
     "http://localhost:5173",
+    "http://127.0.0.1:5173",
     "http://localhost:3000",
+    "http://127.0.0.1:3000",
     "http://172.17.33.11:5173",  # WSL network IP
 ]
 
-# Allow CSRF cookie to be sent in cross-origin requests
-CSRF_COOKIE_SAMESITE = 'Lax'
+# SESSION settings - 允许跨域 session
 SESSION_COOKIE_SAMESITE = 'Lax'
+SESSION_COOKIE_SECURE = False  # 开发环境使用 HTTP
+CSRF_COOKIE_SAMESITE = 'Lax'
+CSRF_COOKIE_SECURE = False
 
 # Django REST Framework settings
 REST_FRAMEWORK = {
@@ -160,4 +171,14 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 50,
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '100/hour',  # 匿名用户每小时100次
+        'user': '1000/hour',  # 认证用户每小时1000次
+        'login': '10/hour',  # 登录接口每小时10次
+        'register': '5/hour',  # 注册接口每小时5次
+    }
 }

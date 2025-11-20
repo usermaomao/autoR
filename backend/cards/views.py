@@ -1,7 +1,8 @@
 from rest_framework import viewsets, status, permissions
-from rest_framework.decorators import action, api_view, permission_classes
+from rest_framework.decorators import action, api_view, permission_classes, throttle_classes
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.throttling import AnonRateThrottle
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import User
 from django_filters.rest_framework import DjangoFilterBackend
@@ -15,9 +16,19 @@ from .serializers import (
 )
 
 
+# 自定义速率限制类
+class LoginRateThrottle(AnonRateThrottle):
+    rate = '10/hour'
+
+
+class RegisterRateThrottle(AnonRateThrottle):
+    rate = '5/hour'
+
+
 # 认证相关视图
 @api_view(['POST'])
 @permission_classes([AllowAny])
+@throttle_classes([RegisterRateThrottle])
 def register_view(request):
     """用户注册"""
     serializer = UserRegistrationSerializer(data=request.data)
@@ -32,6 +43,7 @@ def register_view(request):
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
+@throttle_classes([LoginRateThrottle])
 def login_view(request):
     """用户登录"""
     username = request.data.get('username')
@@ -190,12 +202,13 @@ def get_review_queue(request):
     from .services.sm2 import generate_review_queue
 
     limit = int(request.query_params.get('limit', 50))
-    cards = generate_review_queue(request.user, limit)
+    result = generate_review_queue(request.user, limit)
 
-    serializer = CardListSerializer(cards, many=True)
+    serializer = CardListSerializer(result['cards'], many=True)
     return Response({
-        'count': len(cards),
-        'cards': serializer.data
+        'count': len(result['cards']),
+        'cards': serializer.data,
+        'stats': result['stats']
     })
 
 
@@ -318,6 +331,70 @@ def lookup_english(request, word):
         }, status=status.HTTP_404_NOT_FOUND)
 
 
+def _save_hanzi_to_local(char: str, result: dict, db_path: str):
+    """
+    将百度汉语查询结果保存到本地数据库
+    使用单独的 hanzi_baidu 表避免与原有 hanzi 表冲突
+
+    Args:
+        char: 汉字
+        result: 百度汉语返回的结果字典
+        db_path: 数据库路径
+    """
+    import sqlite3
+    import os
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    try:
+        # 确保数据库目录存在
+        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+
+        # 创建专用表 hanzi_baidu（如果不存在）
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS hanzi_baidu (
+                char TEXT PRIMARY KEY,
+                pinyin TEXT,
+                radical TEXT,
+                strokes INTEGER,
+                frequency INTEGER DEFAULT 0,
+                meaning TEXT,
+                examples TEXT,
+                traditional TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # 插入或更新数据
+        cursor.execute("""
+            INSERT OR REPLACE INTO hanzi_baidu
+            (char, pinyin, radical, strokes, frequency, meaning, examples, traditional, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        """, (
+            char,
+            ','.join(result.get('pinyin', [])) if isinstance(result.get('pinyin'), list) else str(result.get('pinyin', '')),
+            result.get('radical', ''),
+            result.get('strokes', 0),
+            result.get('frequency', 0),
+            result.get('meaning_zh', ''),
+            '|'.join(result.get('examples', [])) if isinstance(result.get('examples'), list) else '',
+            result.get('traditional', '')
+        ))
+
+        conn.commit()
+        conn.close()
+
+        logger.info(f"汉字 '{char}' 已保存到本地数据库 (hanzi_baidu 表)")
+
+    except Exception as e:
+        logger.error(f"保存汉字到本地数据库失败: {e}")
+
+
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def lookup_hanzi(request, char):
@@ -350,30 +427,49 @@ def lookup_hanzi(request, char):
             conn = sqlite3.connect(hanzi_db_path)
             cursor = conn.cursor()
 
-            # 查询汉字（表结构: char, pinyin, radical, strokes, frequency, meaning, examples）
+            # 先查询 hanzi_baidu 表（百度API缓存）
             cursor.execute(
-                "SELECT * FROM hanzi WHERE char = ?",
+                "SELECT char, pinyin, radical, strokes, frequency, meaning, examples, traditional FROM hanzi_baidu WHERE char = ?",
                 (char,)
             )
             row = cursor.fetchone()
-            conn.close()
 
-            if row:
-                # 解析数据
+            # 如果 hanzi_baidu 没有，再查询原有的 hanzi 表
+            if not row:
+                cursor.execute(
+                    "SELECT * FROM hanzi WHERE character = ?",
+                    (char,)
+                )
+                row = cursor.fetchone()
+
+                # 旧表结构兼容处理
+                if row and len(row) > 5:
+                    # 旧结构: id, character, decomposition, rationality_score, pinyin, traditional, ...
+                    local_result = {
+                        'char': row[1],  # character
+                        'pinyin': row[4].split(',') if row[4] else [],  # pinyin
+                        'traditional': row[5] if len(row) > 5 else '',  # traditional
+                        'source': 'local-dict'
+                    }
+            else:
+                # 新表结构 hanzi_baidu
                 local_result = {
                     'char': row[0],
-                    'pinyin': row[1].split(',') if row[1] else [],  # 多音字数组
-                    'radical': row[2] if len(row) > 2 else '',
-                    'strokes': row[3] if len(row) > 3 else 0,
-                    'frequency': row[4] if len(row) > 4 else 0,
-                    'meaning_zh': row[5] if len(row) > 5 else '',
-                    'examples': row[6].split('|') if len(row) > 6 and row[6] else [],
+                    'pinyin': row[1].split(',') if row[1] else [],
+                    'radical': row[2] or '',
+                    'strokes': row[3] or 0,
+                    'frequency': row[4] or 0,
+                    'meaning_zh': row[5] or '',
+                    'examples': row[6].split('|') if row[6] else [],
+                    'traditional': row[7] or '',
                     'source': 'local-dict'
                 }
 
+            conn.close()
+
+            if local_result:
                 # 缓存结果（1天）
                 cache.set(cache_key, local_result, timeout=86400)
-
                 return Response(local_result)
 
         except Exception as e:
@@ -388,6 +484,9 @@ def lookup_hanzi(request, char):
         if baidu_result:
             # 缓存结果（1天）
             cache.set(cache_key, baidu_result, timeout=86400)
+
+            # 自动保存到本地数据库
+            _save_hanzi_to_local(char, baidu_result, hanzi_db_path)
 
             return Response(baidu_result)
 
@@ -454,5 +553,130 @@ def infer_pinyin(request):
         'confidence': 0.6,  # 中等置信度
         'alternatives': lazy_pinyin(char, style=Style.TONE)
     })
+
+
+# ==================== 导入导出功能 ====================
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def import_cards(request):
+    """
+    导入卡片
+
+    POST /api/cards/import/
+    Content-Type: multipart/form-data
+
+    参数:
+    - file: 文件对象 (CSV 或 JSON)
+    - format: 文件格式 ('csv' 或 'json')
+    - deck_id: 目标卡组ID
+    - card_type: 卡片类型 ('en' 或 'zh')，默认 'en'
+    - conflict_strategy: 冲突处理策略 ('skip', 'overwrite', 'merge')，默认 'skip'
+
+    返回:
+    {
+        "total": 1000,
+        "imported": 850,
+        "skipped": 100,
+        "failed": 50,
+        "errors": ["错误信息1", ...],
+        "duplicates": [{"index": 1, "word": "apple", ...}, ...]
+    }
+    """
+    from .services.import_export import ImportExportService
+
+    serializer = CardImportSerializer(data=request.data, context={'request': request})
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    # 获取参数
+    uploaded_file = serializer.validated_data['file']
+    file_format = serializer.validated_data['format']
+    deck_id = serializer.validated_data['deck_id']
+    card_type = serializer.validated_data['card_type']
+    conflict_strategy = serializer.validated_data['conflict_strategy']
+
+    try:
+        # 读取文件内容
+        file_content = uploaded_file.read().decode('utf-8')
+
+        # 获取卡组
+        deck = Deck.objects.get(id=deck_id, user=request.user)
+
+        # 执行导入
+        result = ImportExportService.import_cards(
+            file_content=file_content,
+            file_format=file_format,
+            user=request.user,
+            deck=deck,
+            card_type=card_type,
+            conflict_strategy=conflict_strategy
+        )
+
+        return Response(result, status=status.HTTP_200_OK)
+
+    except UnicodeDecodeError:
+        return Response(
+            {'error': '文件编码错误，请使用 UTF-8 编码'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    except Exception as e:
+        return Response(
+            {'error': f'导入失败: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def export_cards(request):
+    """
+    导出卡片
+
+    GET /api/cards/export/?format=csv&deck_id=1
+
+    参数:
+    - format: 导出格式 ('csv' 或 'json')，默认 'csv'
+    - deck_id: 卡组ID（可选），不指定则导出所有卡片
+
+    返回:
+    文件下载（CSV 或 JSON）
+    """
+    from .services.import_export import ImportExportService
+    from django.http import HttpResponse
+
+    serializer = CardExportSerializer(data=request.query_params)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    file_format = serializer.validated_data['format']
+    deck_id = serializer.validated_data.get('deck_id')
+
+    try:
+        # 查询卡片
+        cards = Card.objects.filter(user=request.user).select_related('deck')
+        if deck_id:
+            cards = cards.filter(deck_id=deck_id)
+
+        # 导出
+        if file_format == 'csv':
+            content = ImportExportService.export_cards_to_csv(cards)
+            content_type = 'text/csv'
+            filename = f'cards_export_{timezone.now().strftime("%Y%m%d")}.csv'
+        else:  # json
+            content = ImportExportService.export_cards_to_json(cards)
+            content_type = 'application/json'
+            filename = f'cards_export_{timezone.now().strftime("%Y%m%d")}.json'
+
+        # 创建响应
+        response = HttpResponse(content, content_type=content_type)
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return response
+
+    except Exception as e:
+        return Response(
+            {'error': f'导出失败: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
 
 

@@ -92,7 +92,16 @@ def generate_review_queue(user, limit: int = 50):
         limit: 队列大小限制
 
     Returns:
-        Card QuerySet
+        dict: {
+            'cards': Card 对象列表,
+            'stats': {
+                'due_count': 到期卡片数,
+                'leech_count': 难项卡片数,
+                'new_count': 新卡片数,
+                'total_new': 总新卡数,
+                'message': 提示信息
+            }
+        }
     """
     from cards.models import Card
 
@@ -106,6 +115,7 @@ def generate_review_queue(user, limit: int = 50):
     ).order_by('due_at', '-lapses')[:limit]
 
     due_card_ids = list(due_cards.values_list('id', flat=True))
+    due_count = len(due_card_ids)
 
     # 2. 难项优先（lapses >= 3）
     leech_cards = Card.objects.filter(
@@ -114,6 +124,7 @@ def generate_review_queue(user, limit: int = 50):
     ).exclude(id__in=due_card_ids).order_by('-lapses')[:10]
 
     leech_card_ids = list(leech_cards.values_list('id', flat=True))
+    leech_count = len(leech_card_ids)
 
     # 3. 新卡（根据配置的每日新卡限制）
     # 获取用户的默认卡组配置
@@ -124,12 +135,17 @@ def generate_review_queue(user, limit: int = 50):
     except:
         daily_new_limit = 20
 
+    # 统计总新卡数
+    total_new_cards = Card.objects.filter(user=user, state='new').count()
+
     new_cards = Card.objects.filter(
         user=user,
         state='new'
     ).exclude(
         id__in=due_card_ids + leech_card_ids
     ).order_by('created_at')[:daily_new_limit]
+
+    new_count = new_cards.count()
 
     # 合并所有卡片（保持优先级顺序）
     all_card_ids = list(due_cards.values_list('id', flat=True)) + \
@@ -143,7 +159,33 @@ def generate_review_queue(user, limit: int = 50):
     card_dict = {card.id: card for card in cards}
     ordered_cards = [card_dict[card_id] for card_id in all_card_ids if card_id in card_dict]
 
-    return ordered_cards[:limit]
+    # 生成提示信息
+    message = ''
+    if not ordered_cards:
+        if total_new_cards == 0:
+            message = '恭喜!你已经完成了所有复习,且没有新卡片需要学习。'
+        else:
+            message = f'今日复习已完成!还有 {total_new_cards} 张新卡片待学习。'
+    else:
+        parts = []
+        if due_count > 0:
+            parts.append(f'{due_count} 张到期')
+        if leech_count > 0:
+            parts.append(f'{leech_count} 张难项')
+        if new_count > 0:
+            parts.append(f'{new_count} 张新卡')
+        message = f'本次复习: {", ".join(parts)}'
+
+    return {
+        'cards': ordered_cards[:limit],
+        'stats': {
+            'due_count': due_count,
+            'leech_count': leech_count,
+            'new_count': new_count,
+            'total_new': total_new_cards,
+            'message': message
+        }
+    }
 
 
 def mark_leech(card) -> bool:
@@ -203,7 +245,8 @@ def process_review(card, quality: int, time_taken: int):
         card.state = new_state
 
         if new_state == 'review':
-            card.interval = calculate_interval(card.interval, card.ef, quality)
+            # 从学习阶段毕业,interval 从 0 开始计算
+            card.interval = calculate_interval(0, card.ef, quality)
 
     elif card.state == 'review':
         # 复习阶段
@@ -260,8 +303,9 @@ def undo_review(review_log):
     card.interval = review_log.before_interval
     card.due_at = review_log.before_due_at
 
-    # 如果是从 Again 撤销，需要减少 lapses
-    if review_log.quality == 0 and card.lapses > 0:
+    # 如果是从复习阶段失败(quality < 3)撤销，需要减少 lapses
+    # 因为在 process_review 中,复习阶段 quality < 3 会增加 lapses
+    if review_log.before_state == 'review' and review_log.quality < 3 and card.lapses > 0:
         card.lapses -= 1
 
     card.save()

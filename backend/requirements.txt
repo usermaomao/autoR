@@ -9,6 +9,10 @@ pypinyin==0.55.0
 sqlparse==0.5.3
 typing_extensions==4.15.0
 
+# 百度汉语查询依赖
+beautifulsoup4==4.12.3
+requests==2.31.0
+
 # 测试依赖
 pytest==8.0.0
 pytest-django==4.8.0

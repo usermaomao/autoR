@@ -3,9 +3,14 @@
     <nav class="bg-white shadow-sm">
       <div class="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
         <router-link to="/" class="text-gray-600 hover:text-gray-900">← 返回</router-link>
-        <router-link to="/cards/new" class="btn bg-blue-600 text-white hover:bg-blue-700">
-          + 添加卡片
-        </router-link>
+        <div class="flex gap-2">
+          <router-link to="/cards/import-export" class="btn border border-gray-300 text-gray-700 hover:bg-gray-50">
+            📥📤 导入/导出
+          </router-link>
+          <router-link to="/cards/new" class="btn bg-blue-600 text-white hover:bg-blue-700">
+            + 添加卡片
+          </router-link>
+        </div>
       </div>
     </nav>
 
@@ -54,9 +59,18 @@
       <div v-if="selectedCards.length > 0" class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
         <div class="flex justify-between items-center">
           <span class="text-blue-800">已选择 {{ selectedCards.length }} 张卡片</span>
-          <div class="flex gap-2">
+          <div class="flex gap-2 flex-wrap">
+            <button @click="showBatchMoveDialog = true" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+              📁 移动到卡组
+            </button>
+            <button @click="showBatchTagsDialog = true" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">
+              🏷️ 修改标签
+            </button>
+            <button @click="handleBatchResetProgress" class="px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700">
+              🔄 重置进度
+            </button>
             <button @click="handleBatchDelete" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700">
-              批量删除
+              🗑️ 批量删除
             </button>
             <button @click="selectedCards = []" class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50">
               取消选择
@@ -152,6 +166,92 @@
         </div>
       </div>
     </div>
+
+    <!-- 批量移动卡组对话框 -->
+    <div v-if="showBatchMoveDialog" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" @click.self="showBatchMoveDialog = false">
+      <div class="bg-white rounded-lg shadow-xl p-6 w-full max-w-md">
+        <h2 class="text-2xl font-bold mb-4">移动到卡组</h2>
+        <p class="text-gray-600 mb-4">将选中的 {{ selectedCards.length }} 张卡片移动到：</p>
+
+        <div class="mb-4">
+          <label class="block text-sm font-medium text-gray-700 mb-2">目标卡组</label>
+          <select v-model="batchMoveTargetDeck" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+            <option value="">请选择卡组</option>
+            <option v-for="deck in decks" :key="deck.id" :value="deck.id">
+              {{ deck.name }}
+            </option>
+          </select>
+        </div>
+
+        <div v-if="batchError" class="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+          {{ batchError }}
+        </div>
+
+        <div class="flex gap-3">
+          <button
+            @click="handleBatchMove"
+            :disabled="!batchMoveTargetDeck || isBatchProcessing"
+            class="flex-1 bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+          >
+            {{ isBatchProcessing ? '处理中...' : '确认移动' }}
+          </button>
+          <button
+            @click="showBatchMoveDialog = false"
+            class="px-6 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
+          >
+            取消
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 批量修改标签对话框 -->
+    <div v-if="showBatchTagsDialog" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" @click.self="showBatchTagsDialog = false">
+      <div class="bg-white rounded-lg shadow-xl p-6 w-full max-w-md">
+        <h2 class="text-2xl font-bold mb-4">批量修改标签</h2>
+        <p class="text-gray-600 mb-4">为选中的 {{ selectedCards.length }} 张卡片修改标签：</p>
+
+        <div class="mb-4">
+          <label class="block text-sm font-medium text-gray-700 mb-2">操作模式</label>
+          <select v-model="batchTagsMode" class="w-full px-4 py-2 border border-gray-300 rounded-lg mb-3">
+            <option value="add">添加标签（保留原有标签）</option>
+            <option value="replace">替换标签（清除原有标签）</option>
+            <option value="remove">移除标签</option>
+          </select>
+
+          <label class="block text-sm font-medium text-gray-700 mb-2">标签（逗号分隔）</label>
+          <input
+            v-model="batchTagsInput"
+            type="text"
+            placeholder="例如: 四级,高频,动词"
+            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500"
+          />
+          <p class="text-xs text-gray-500 mt-1">
+            {{ batchTagsMode === 'add' ? '这些标签将添加到现有标签中' : batchTagsMode === 'replace' ? '这些标签将替换所有现有标签' : '这些标签将从卡片中移除' }}
+          </p>
+        </div>
+
+        <div v-if="batchError" class="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+          {{ batchError }}
+        </div>
+
+        <div class="flex gap-3">
+          <button
+            @click="handleBatchTags"
+            :disabled="!batchTagsInput.trim() || isBatchProcessing"
+            class="flex-1 bg-green-600 text-white py-2 rounded-lg hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+          >
+            {{ isBatchProcessing ? '处理中...' : '确认修改' }}
+          </button>
+          <button
+            @click="showBatchTagsDialog = false"
+            class="px-6 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
+          >
+            取消
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -166,6 +266,15 @@ const cards = ref([])
 const decks = ref([])
 const selectedCards = ref([])
 const isLoading = ref(false)
+
+// 批量操作相关状态
+const showBatchMoveDialog = ref(false)
+const showBatchTagsDialog = ref(false)
+const batchMoveTargetDeck = ref('')
+const batchTagsMode = ref('add')
+const batchTagsInput = ref('')
+const isBatchProcessing = ref(false)
+const batchError = ref('')
 
 const filters = reactive({
   deck_id: '',
@@ -247,9 +356,7 @@ function handleSelectAll(event) {
 
 // 编辑卡片
 function handleEdit(card) {
-  // TODO: 实现编辑功能（可以导航到编辑页面）
-  console.log('Edit card:', card)
-  alert('编辑功能待实现')
+  router.push(`/cards/${card.id}/edit`)
 }
 
 // 删除单个卡片
@@ -278,6 +385,159 @@ async function handleBatchDelete() {
   } catch (err) {
     console.error('Failed to batch delete:', err)
     alert('批量删除失败，请稍后重试')
+  }
+}
+
+// 批量移动到卡组
+async function handleBatchMove() {
+  if (!batchMoveTargetDeck.value) {
+    batchError.value = '请选择目标卡组'
+    return
+  }
+
+  isBatchProcessing.value = true
+  batchError.value = ''
+
+  try {
+    // 逐个更新卡片的卡组
+    await Promise.all(
+      selectedCards.value.map(async (cardId) => {
+        const card = cards.value.find(c => c.id === cardId)
+        if (!card) return
+
+        // 获取完整卡片数据
+        const response = await axios.get(`/api/cards/${cardId}/`)
+        const fullCard = response.data
+
+        // 更新卡组字段
+        await axios.put(`/api/cards/${cardId}/`, {
+          ...fullCard,
+          deck: batchMoveTargetDeck.value
+        })
+      })
+    )
+
+    // 关闭对话框并重置
+    showBatchMoveDialog.value = false
+    batchMoveTargetDeck.value = ''
+    selectedCards.value = []
+
+    // 重新加载卡片列表
+    await loadCards()
+
+    alert(`成功移动 ${selectedCards.value.length} 张卡片`)
+  } catch (err) {
+    console.error('Failed to batch move:', err)
+    batchError.value = '批量移动失败，请稍后重试'
+  } finally {
+    isBatchProcessing.value = false
+  }
+}
+
+// 批量修改标签
+async function handleBatchTags() {
+  if (!batchTagsInput.value.trim()) {
+    batchError.value = '请输入标签'
+    return
+  }
+
+  isBatchProcessing.value = true
+  batchError.value = ''
+
+  try {
+    // 解析输入的标签
+    const inputTags = batchTagsInput.value
+      .split(',')
+      .map(t => t.trim())
+      .filter(t => t.length > 0)
+
+    // 逐个更新卡片的标签
+    const updateCount = selectedCards.value.length
+    await Promise.all(
+      selectedCards.value.map(async (cardId) => {
+        const card = cards.value.find(c => c.id === cardId)
+        if (!card) return
+
+        // 获取完整卡片数据
+        const response = await axios.get(`/api/cards/${cardId}/`)
+        const fullCard = response.data
+
+        let newTags = []
+        if (batchTagsMode.value === 'add') {
+          // 添加模式：合并标签并去重
+          newTags = [...new Set([...(fullCard.tags || []), ...inputTags])]
+        } else if (batchTagsMode.value === 'replace') {
+          // 替换模式：直接使用新标签
+          newTags = inputTags
+        } else if (batchTagsMode.value === 'remove') {
+          // 移除模式：从现有标签中移除指定标签
+          newTags = (fullCard.tags || []).filter(t => !inputTags.includes(t))
+        }
+
+        // 更新标签字段
+        await axios.put(`/api/cards/${cardId}/`, {
+          ...fullCard,
+          tags: newTags
+        })
+      })
+    )
+
+    // 关闭对话框并重置
+    showBatchTagsDialog.value = false
+    batchTagsInput.value = ''
+    batchTagsMode.value = 'add'
+    selectedCards.value = []
+
+    // 重新加载卡片列表
+    await loadCards()
+
+    const modeText = batchTagsMode.value === 'add' ? '添加' : batchTagsMode.value === 'replace' ? '替换' : '移除'
+    alert(`成功为 ${updateCount} 张卡片${modeText}标签`)
+  } catch (err) {
+    console.error('Failed to batch update tags:', err)
+    batchError.value = '批量修改标签失败，请稍后重试'
+  } finally {
+    isBatchProcessing.value = false
+  }
+}
+
+// 批量重置进度
+async function handleBatchResetProgress() {
+  if (!confirm(`确定重置选中的 ${selectedCards.value.length} 张卡片的学习进度吗？\n\n重置后，这些卡片将回到初始状态，所有学习记录将被清除。`)) {
+    return
+  }
+
+  try {
+    // 逐个重置卡片的学习进度
+    await Promise.all(
+      selectedCards.value.map(async (cardId) => {
+        const card = cards.value.find(c => c.id === cardId)
+        if (!card) return
+
+        // 获取完整卡片数据
+        const response = await axios.get(`/api/cards/${cardId}/`)
+        const fullCard = response.data
+
+        // 重置学习相关字段
+        await axios.put(`/api/cards/${cardId}/`, {
+          ...fullCard,
+          ef: 2.5,              // 重置难度系数为默认值
+          interval: 0,          // 重置间隔天数
+          learning_step: 0,     // 重置学习步骤
+          lapses: 0,            // 重置错误次数
+          state: 'new',         // 重置为新卡状态
+          due_at: new Date().toISOString()  // 设置为今天需要复习
+        })
+      })
+    )
+
+    selectedCards.value = []
+    await loadCards()
+
+    alert(`成功重置 ${selectedCards.value.length} 张卡片的学习进度`)
+  } catch (err) {
+    console.error('Failed to batch reset progress:', err)
+    alert('批量重置进度失败，请稍后重试')
   }
 }
 

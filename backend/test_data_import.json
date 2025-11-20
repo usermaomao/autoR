@@ -1,0 +1,9 @@
+{
+  "cards": [
+    {"Front": "sun", "Back": "太阳", "Tags": "自然"},
+    {"Front": "moon", "Back": "月亮", "Tags": "自然"},
+    {"Front": "star", "Back": "星星", "Tags": "自然"},
+    {"Front": "rain", "Back": "雨", "Tags": "自然,天气"},
+    {"Front": "snow", "Back": "雪", "Tags": "自然,天气"}
+  ]
+}

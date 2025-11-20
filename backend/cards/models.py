@@ -1,6 +1,15 @@
 from django.db import models
 from django.contrib.auth.models import User
 from django.utils import timezone
+from datetime import datetime
+
+
+def get_default_due_date():
+    """
+    新卡片的默认到期时间
+    返回一个未来日期，表示该卡片尚未进入复习队列
+    """
+    return datetime(9999, 12, 31, tzinfo=timezone.get_current_timezone())
 
 
 class Deck(models.Model):
@@ -56,7 +65,7 @@ class Card(models.Model):
     difficulty = models.FloatField(default=0, verbose_name='难度')
     stability = models.FloatField(default=0, verbose_name='稳定度')
     lapses = models.IntegerField(default=0, verbose_name='错误次数')
-    due_at = models.DateTimeField(default=timezone.now, verbose_name='下次复习时间')
+    due_at = models.DateTimeField(default=get_default_due_date, verbose_name='下次复习时间')
 
     # 学习阶段字段
     learning_step = models.IntegerField(default=0, verbose_name='学习步骤')
@@ -69,6 +78,15 @@ class Card(models.Model):
     # 用户自定义
     tags = models.JSONField(default=list, verbose_name='标签')
     notes = models.TextField(blank=True, verbose_name='备注')
+
+    # 语义指纹（用于去重）
+    semantic_hash = models.CharField(
+        max_length=32,
+        db_index=True,
+        editable=False,
+        blank=True,
+        verbose_name='语义指纹'
+    )
 
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
@@ -127,6 +145,8 @@ class ReviewLog(models.Model):
         indexes = [
             models.Index(fields=['user', '-reviewed_at']),
             models.Index(fields=['card', '-reviewed_at']),
+            # 用于统计查询(连续打卡天数等)
+            models.Index(fields=['user', 'reviewed_at']),
         ]
 
     def __str__(self):

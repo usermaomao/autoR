@@ -7,10 +7,19 @@
     </nav>
 
     <div class="max-w-4xl mx-auto px-4 py-8">
-      <h1 class="text-3xl font-bold mb-8">添加卡片</h1>
+      <h1 class="text-3xl font-bold mb-8">{{ isEditMode ? '编辑卡片' : '添加卡片' }}</h1>
 
       <div class="bg-white rounded-lg shadow p-6">
-        <form @submit.prevent="handleSubmit">
+        <!-- 加载状态 -->
+        <div v-if="isLoading" class="text-center py-8">
+          <svg class="animate-spin h-8 w-8 mx-auto text-blue-600" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+          <p class="mt-4 text-gray-600">加载中...</p>
+        </div>
+
+        <form v-else @submit.prevent="handleSubmit">
           <!-- 卡组选择 -->
           <div class="mb-6">
             <label class="block text-sm font-medium text-gray-700 mb-2">卡组</label>
@@ -155,7 +164,7 @@
               :disabled="isSubmitting || decks.length === 0"
               class="flex-1 bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
             >
-              {{ isSubmitting ? '保存中...' : '保存卡片' }}
+              {{ isSubmitting ? '保存中...' : isEditMode ? '更新卡片' : '保存卡片' }}
             </button>
             <button
               type="button"
@@ -223,12 +232,17 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, reactive, onMounted, computed } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import axios from 'axios'
 import { lookupWord } from '@/services/dictService'
 
 const router = useRouter()
+const route = useRoute()
+
+// 判断是否为编辑模式
+const cardId = computed(() => route.params.id)
+const isEditMode = computed(() => !!cardId.value)
 
 const form = reactive({
   deck: '',
@@ -246,6 +260,7 @@ const pinyinCandidates = ref([])
 const dictResult = ref(null)
 const isLookingUp = ref(false)
 const isSubmitting = ref(false)
+const isLoading = ref(false)
 const error = ref('')
 
 // 快速创建卡组相关状态
@@ -265,23 +280,79 @@ function handleDeckChange() {
   }
 }
 
-// 获取卡组列表
+// 获取卡组列表和卡片数据（编辑模式）
 onMounted(async () => {
   try {
+    // 加载卡组列表
     const response = await axios.get('/api/decks/')
-
-    // DRF返回分页格式: {count, results: [...]}
     decks.value = response.data.results || response.data
 
-    // 如果只有一个卡组，自动选中
-    if (decks.value.length === 1) {
-      form.deck = decks.value[0].id
+    // 如果是编辑模式，加载卡片数据
+    if (isEditMode.value) {
+      await loadCardData()
+    } else {
+      // 添加模式：如果只有一个卡组，自动选中
+      if (decks.value.length === 1) {
+        form.deck = decks.value[0].id
+      }
     }
   } catch (err) {
     console.error('Failed to load decks:', err)
     error.value = '加载卡组列表失败'
   }
 })
+
+// 加载卡片数据（编辑模式）
+async function loadCardData() {
+  isLoading.value = true
+  error.value = ''
+
+  try {
+    const response = await axios.get(`/api/cards/${cardId.value}/`)
+    const card = response.data
+
+    // 填充表单
+    form.deck = card.deck
+    form.card_type = card.card_type
+    form.word = card.word
+    form.metadata = card.metadata || {}
+    form.tags = card.tags || []
+
+    // 从 metadata 中提取释义和例句
+    if (card.metadata) {
+      if (card.card_type === 'en') {
+        form.meaning = card.metadata.meaning_zh || card.metadata.meaning_en || ''
+        form.example = card.metadata.examples ? card.metadata.examples.join('\n') : ''
+      } else if (card.card_type === 'zh') {
+        form.meaning = card.metadata.meaning_zh || ''
+        form.example = card.metadata.examples ? card.metadata.examples.join('\n') : ''
+
+        // 恢复拼音候选项
+        if (card.metadata.pinyin) {
+          if (Array.isArray(card.metadata.pinyin)) {
+            pinyinCandidates.value = card.metadata.pinyin
+          } else {
+            pinyinCandidates.value = [card.metadata.pinyin]
+          }
+        }
+      }
+    }
+
+    // 恢复标签输入
+    tagsInput.value = card.tags ? card.tags.join(', ') : ''
+
+  } catch (err) {
+    console.error('Failed to load card:', err)
+    error.value = '加载卡片数据失败'
+
+    // 如果加载失败，返回列表页
+    setTimeout(() => {
+      router.push('/cards')
+    }, 2000)
+  } finally {
+    isLoading.value = false
+  }
+}
 
 // 快速创建卡组
 async function handleQuickCreateDeck() {
@@ -389,8 +460,8 @@ async function handleWordBlur() {
         if (data.pinyin && data.pinyin.length > 0) {
           pinyinCandidates.value = data.pinyin
 
-          // 自动选择第一个拼音
-          form.metadata.pinyin = data.pinyin[0]
+          // 保存完整的拼音数组（支持多音字）
+          form.metadata.pinyin = data.pinyin
         } else {
           // 如果API没有返回拼音,调用拼音推断API
           try {
@@ -401,9 +472,9 @@ async function handleWordBlur() {
             if (pinyinResponse.data && pinyinResponse.data.candidates) {
               pinyinCandidates.value = pinyinResponse.data.candidates
 
-              // 自动选择第一个拼音
+              // 保存完整的拼音数组（支持多音字）
               if (pinyinCandidates.value.length > 0) {
-                form.metadata.pinyin = pinyinCandidates.value[0]
+                form.metadata.pinyin = pinyinCandidates.value
               }
             }
           } catch (pinyinErr) {
@@ -487,13 +558,41 @@ async function handleSubmit() {
       .map(t => t.trim())
       .filter(t => t.length > 0)
 
-    // 提交到后端
-    await axios.post('/api/cards/', form)
+    // 构建提交数据
+    const submitData = {
+      deck: form.deck,
+      card_type: form.card_type,
+      word: form.word,
+      tags: form.tags,
+      metadata: { ...form.metadata }
+    }
+
+    // 将释义和例句存入 metadata
+    if (form.card_type === 'en') {
+      submitData.metadata.meaning_zh = form.meaning
+      submitData.metadata.meaning_en = form.meaning
+    } else if (form.card_type === 'zh') {
+      submitData.metadata.meaning_zh = form.meaning
+    }
+
+    // 将例句存入 metadata
+    if (form.example && form.example.trim()) {
+      submitData.metadata.examples = form.example.split('\n').filter(e => e.trim())
+    }
+
+    // 根据模式选择 API 方法
+    if (isEditMode.value) {
+      // 更新模式：使用 PUT
+      await axios.put(`/api/cards/${cardId.value}/`, submitData)
+    } else {
+      // 添加模式：使用 POST
+      await axios.post('/api/cards/', submitData)
+    }
 
     // 成功后跳转到卡片列表
     router.push('/cards')
   } catch (err) {
-    console.error('Failed to create card:', err)
+    console.error('Failed to save card:', err)
     error.value = err.response?.data?.detail || '保存失败，请稍后重试'
   } finally {
     isSubmitting.value = false
