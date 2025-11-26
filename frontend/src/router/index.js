@@ -52,6 +52,12 @@ const routes = [
     name: 'stats',
     component: () => import('@/views/Stats.vue'),
     meta: { requiresAuth: true }
+  },
+  {
+    path: '/ai-settings',
+    name: 'ai-settings',
+    component: () => import('@/views/AISettings.vue'),
+    meta: { requiresAuth: true }
   }
 ]
 

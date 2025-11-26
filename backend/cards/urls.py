@@ -6,6 +6,7 @@ router = DefaultRouter()
 router.register(r'decks', views.DeckViewSet, basename='deck')
 router.register(r'cards', views.CardViewSet, basename='card')
 router.register(r'review-logs', views.ReviewLogViewSet, basename='reviewlog')
+router.register(r'ai-config', views.AIConfigViewSet, basename='aiconfig')
 
 urlpatterns = [
     # 认证相关
@@ -27,6 +28,9 @@ urlpatterns = [
     # 导入导出相关
     path('cards/import/', views.import_cards, name='cards-import'),
     path('cards/export/', views.export_cards, name='cards-export'),
+
+    # AI相关
+    path('ai/summarize/', views.ai_summarize_view, name='ai-summarize'),
 
     # ViewSet 路由
     path('', include(router.urls)),

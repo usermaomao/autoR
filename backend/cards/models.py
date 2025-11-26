@@ -2,6 +2,8 @@ from django.db import models
 from django.contrib.auth.models import User
 from django.utils import timezone
 from datetime import datetime
+from cryptography.fernet import Fernet
+import os
 
 
 def get_default_due_date():
@@ -183,4 +185,88 @@ class ECDict(models.Model):
 
     def __str__(self):
         return self.word
+
+
+class AIConfig(models.Model):
+    """AI配置模型 - 用于存储用户的AI API配置"""
+
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='ai_config')
+
+    # AI模型配置
+    provider = models.CharField(
+        max_length=50,
+        default='openai',
+        verbose_name='AI提供商',
+        help_text='openai, anthropic, local等'
+    )
+    base_url = models.URLField(
+        max_length=500,
+        default='https://api.openai.com/v1',
+        verbose_name='API Base URL'
+    )
+    model_name = models.CharField(
+        max_length=100,
+        default='gpt-3.5-turbo',
+        verbose_name='模型名称',
+        help_text='如: gpt-3.5-turbo, claude-3-sonnet等'
+    )
+
+    # 加密存储的API Key
+    encrypted_api_key = models.BinaryField(verbose_name='加密的API Key', null=True, blank=True)
+
+    # 功能开关
+    enabled = models.BooleanField(default=False, verbose_name='启用AI功能')
+    auto_summarize = models.BooleanField(default=False, verbose_name='自动总结')
+
+    # 配置项
+    temperature = models.FloatField(default=0.7, verbose_name='温度参数')
+    max_tokens = models.IntegerField(default=500, verbose_name='最大Token数')
+
+    # 自定义提示词
+    custom_chinese_prompt = models.TextField(
+        blank=True,
+        null=True,
+        verbose_name='自定义汉字提示词',
+        help_text='自定义汉字学习卡片生成提示词,留空则使用默认提示词。使用{char}作为汉字占位符,使用{context}作为额外信息占位符'
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
+
+    class Meta:
+        verbose_name = 'AI配置'
+        verbose_name_plural = 'AI配置'
+
+    def __str__(self):
+        return f"{self.user.username} - AI配置 ({self.provider})"
+
+    @staticmethod
+    def _get_cipher():
+        """获取加密密钥"""
+        # 从环境变量获取加密密钥,如果不存在则生成一个
+        key = os.environ.get('AI_CONFIG_ENCRYPTION_KEY')
+        if not key:
+            # 开发环境使用固定密钥(生产环境必须使用环境变量)
+            key = 'development_key_32_bytes_length!!'
+        # Fernet需要32字节的base64编码密钥
+        from base64 import urlsafe_b64encode
+        return Fernet(urlsafe_b64encode(key.encode().ljust(32)[:32]))
+
+    def set_api_key(self, api_key: str):
+        """加密并存储API Key"""
+        if api_key:
+            cipher = self._get_cipher()
+            self.encrypted_api_key = cipher.encrypt(api_key.encode())
+        else:
+            self.encrypted_api_key = None
+
+    def get_api_key(self) -> str:
+        """解密并返回API Key"""
+        if not self.encrypted_api_key:
+            return ''
+        try:
+            cipher = self._get_cipher()
+            return cipher.decrypt(self.encrypted_api_key).decode()
+        except Exception:
+            return ''
 

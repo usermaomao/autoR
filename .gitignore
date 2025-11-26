@@ -52,7 +52,29 @@ Thumbs.db
 # Backup
 *.backup
 *.bak
+*.backup_*
 .backup/
+
+# Documentation Archive
+docs/archive/
+
+# Temporary files
+*.tmp
+*.temp
+*~
+
+# Test files
+test_*.py
+test_*.sh
+test_*.html
+test_*.md
+bug*.png
+bug*.jpg
+
+# Temporary reports
+*修复报告.md
+*修复完成报告.md
+*完成报告.md
 
 # Logs
 npm-debug.log*

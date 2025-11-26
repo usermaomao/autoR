@@ -8,11 +8,11 @@ from django.contrib.auth.models import User
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters
 
-from .models import Deck, Card, ReviewLog
+from .models import Deck, Card, ReviewLog, AIConfig
 from .serializers import (
     UserSerializer, UserRegistrationSerializer,
     DeckSerializer, CardSerializer, CardListSerializer,
-    ReviewLogSerializer
+    ReviewLogSerializer, AIConfigSerializer, AISummarizeRequestSerializer
 )
 
 
@@ -118,7 +118,17 @@ class CardViewSet(viewsets.ModelViewSet):
         return CardSerializer
 
     def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+        from django.utils import timezone
+        from datetime import timedelta
+        from .services.sm2 import LEARNING_STEPS
+
+        # 保存卡片
+        card = serializer.save(user=self.request.user)
+
+        # 新卡片设置初始复习时间为10分钟后（学习步骤的第一步）
+        if card.state == 'new':
+            card.due_at = timezone.now() + timedelta(minutes=LEARNING_STEPS[0])
+            card.save(update_fields=['due_at'])
 
     @action(detail=False, methods=['get'])
     def due_today(self, request):
@@ -679,4 +689,332 @@ def export_cards(request):
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
+
+# AI配置相关视图
+class AIConfigViewSet(viewsets.ModelViewSet):
+    """AI配置 ViewSet"""
+    serializer_class = AIConfigSerializer
+    permission_classes = [IsAuthenticated]
+    http_method_names = ['get', 'post', 'put', 'patch']  # 不允许删除
+
+    def get_queryset(self):
+        # 每个用户只有一个配置
+        return AIConfig.objects.filter(user=self.request.user)
+
+    def get_object(self):
+        # 获取或创建用户的AI配置
+        config, created = AIConfig.objects.get_or_create(
+            user=self.request.user,
+            defaults={
+                'provider': 'openai',
+                'base_url': 'https://api.openai.com/v1',
+                'model_name': 'gpt-3.5-turbo',
+                'enabled': False
+            }
+        )
+        return config
+
+    def list(self, request, *args, **kwargs):
+        # 直接返回当前用户的配置（单个对象，不是列表）
+        config = self.get_object()
+        serializer = self.get_serializer(config)
+        return Response(serializer.data)
+
+    def create(self, request, *args, **kwargs):
+        # 如果已存在配置，则更新而非创建
+        try:
+            config = AIConfig.objects.get(user=request.user)
+            serializer = self.get_serializer(config, data=request.data, partial=True)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            return Response(serializer.data)
+        except AIConfig.DoesNotExist:
+            return super().create(request, *args, **kwargs)
+
+    @action(detail=False, methods=['post'])
+    def test_connection(self, request):
+        """测试AI连接"""
+        config = self.get_object()
+
+        if not config.enabled:
+            return Response(
+                {'error': 'AI功能未启用'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        api_key = config.get_api_key()
+        if not api_key:
+            return Response(
+                {'error': '未配置API Key'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            # 测试连接
+            from .services.ai_service import AIService
+            ai_service = AIService(config)
+            result = ai_service.test_connection()
+
+            return Response({
+                'success': True,
+                'message': '连接测试成功',
+                'model': config.model_name
+            })
+        except Exception as e:
+            return Response(
+                {'error': f'连接测试失败: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=['post'], url_path='test-chinese-prompt')
+    def test_chinese_prompt(self, request):
+        """测试汉字提示词生成"""
+        import time
+
+        config = self.get_object()
+
+        if not config.enabled:
+            return Response(
+                {'error': 'AI功能未启用，请先在配置中启用AI功能'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        api_key = config.get_api_key()
+        if not api_key:
+            return Response(
+                {'error': '未配置API Key，请先在配置中填写API Key'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        char = request.data.get('char', '').strip()
+        if not char or len(char) != 1:
+            return Response(
+                {'error': '请输入一个汉字'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            from .services.ai_service import AIService
+
+            ai_service = AIService(config)
+
+            # 调用AI生成汉字学习卡片
+            start_time = time.time()
+            result = ai_service.summarize_word(char, 'zh', context='')
+            duration = int((time.time() - start_time) * 1000)
+
+            # 获取发送的提示词
+            prompt = ai_service._build_chinese_prompt(char, '')
+
+            # 解析AI返回的内容
+            parsed = self._parse_chinese_content(result)
+
+            return Response({
+                'success': True,
+                'char': char,
+                'prompt': prompt,
+                'response': result,
+                'parsed': parsed,
+                'model': config.model_name,
+                'temperature': config.temperature,
+                'max_tokens': config.max_tokens,
+                'duration': duration
+            })
+
+        except Exception as e:
+            import traceback
+            error_detail = traceback.format_exc()
+
+            return Response(
+                {
+                    'error': f'AI生成失败: {str(e)}',
+                    'detail': error_detail
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    def _parse_chinese_content(self, content):
+        """解析汉字AI返回内容（与前端逻辑一致）"""
+        import re
+
+        result = {
+            'pinyin': [],
+            'meaning': '',
+            'radical': '',
+            'strokes': '',
+            'structure': '',
+            'examples': [],
+            'memoryTips': '',
+            'confusion': '',
+            'exercises': '',
+            'keyPoints': '',
+            'writingTips': '',
+            'memoryScript': '',
+            'summary': ''
+        }
+
+        if not content:
+            return result
+
+        try:
+            # 1. 解析关键要点
+            key_points_match = re.search(r'\*\*1\.\s*关键要点\*\*[\s\S]*?([\s\S]*?)(?=\n\*\*2\.|$)', content, re.IGNORECASE)
+            if key_points_match:
+                lines = [line.strip() for line in key_points_match.group(1).strip().split('\n')]
+                result['keyPoints'] = '\n'.join([line.replace('- ', '', 1) for line in lines if line.startswith('-')])
+
+            # 2. 解析核心卡片
+            core_card_match = re.search(r'\*\*2\.\s*核心卡片\*\*[\s\S]*?([\s\S]*?)(?=\n\*\*3\.|$)', content, re.IGNORECASE)
+            if core_card_match:
+                core_text = core_card_match.group(1)
+
+                # 提取拼音
+                pinyin_match = re.search(r'拼音[与和]?声调[：:]\s*(.+?)(?:\n|$)', core_text, re.IGNORECASE)
+                if pinyin_match:
+                    pinyin_text = re.sub(r'[（）\(\)\[\]【】]', '', pinyin_match.group(1).strip())
+                    result['pinyin'] = [p.strip() for p in re.split(r'[,，、；;]', pinyin_text) if p.strip()]
+
+                # 提取部首/结构/笔画
+                radical_match = re.search(r'部首[/\s]*结构[/\s]*笔画[：:]\s*(.+?)(?:\n|$)', core_text, re.IGNORECASE)
+                if radical_match:
+                    parts = [p.strip() for p in re.split(r'[；;，,]', radical_match.group(1))]
+                    if len(parts) > 0:
+                        result['radical'] = parts[0]
+                    if len(parts) > 1:
+                        result['structure'] = parts[1]
+                    if len(parts) > 2:
+                        result['strokes'] = re.sub(r'[^0-9]', '', parts[2])
+
+                # 提取高频义项
+                meaning_match = re.search(r'高频义项[^：:]*[：:]\s*(.+?)(?:\n|$)', core_text, re.IGNORECASE)
+                if meaning_match:
+                    result['meaning'] = meaning_match.group(1).strip()
+
+                # 提取常见词
+                words_match = re.search(r'常见词[^：:]*[：:]\s*(.+?)(?:\n|$)', core_text, re.IGNORECASE)
+                if words_match:
+                    result['examples'] = [w.strip() for w in re.split(r'[、，,]', words_match.group(1)) if w.strip()]
+
+            # 3-4. 解析构形拆解、读音记忆
+            structure_match = re.search(r'\*\*3\.\s*构形拆解[与和]?联想\*\*[\s\S]*?([\s\S]*?)(?=\n\*\*4\.|$)', content, re.IGNORECASE)
+            pronunciation_match = re.search(r'\*\*4\.\s*读音记忆\*\*[\s\S]*?([\s\S]*?)(?=\n\*\*5\.|$)', content, re.IGNORECASE)
+
+            memory_parts = []
+            if structure_match:
+                lines = [line.strip() for line in structure_match.group(1).strip().split('\n')]
+                structure_text = '\n'.join([line.replace('- ', '', 1) for line in lines if line.startswith('-')])
+                if structure_text:
+                    memory_parts.append('**构形记忆**:\n' + structure_text)
+
+            if pronunciation_match:
+                lines = [line.strip() for line in pronunciation_match.group(1).strip().split('\n')]
+                pron_text = '\n'.join([line.replace('- ', '', 1) for line in lines if line.startswith('-')])
+                if pron_text:
+                    memory_parts.append('**读音记忆**:\n' + pron_text)
+
+            result['memoryTips'] = '\n\n'.join(memory_parts)
+
+            # 5. 解析书写与笔顺
+            writing_match = re.search(r'\*\*5\.\s*书写[与和]?笔顺\*\*[\s\S]*?([\s\S]*?)(?=\n\*\*6\.|$)', content, re.IGNORECASE)
+            if writing_match:
+                lines = [line.strip() for line in writing_match.group(1).strip().split('\n')]
+                result['writingTips'] = '\n'.join([line.replace('- ', '', 1) for line in lines if line.startswith('-')])
+
+            # 6. 解析易混辨析
+            confusion_match = re.search(r'\*\*6\.\s*易混辨析\*\*[\s\S]*?([\s\S]*?)(?=\n\*\*7\.|$)', content, re.IGNORECASE)
+            if confusion_match:
+                lines = [line.strip() for line in confusion_match.group(1).strip().split('\n')]
+                result['confusion'] = '\n'.join([re.sub(r'^-\s*与?\s*', '', line) for line in lines if line.startswith('-')])
+
+            # 7. 解析语境与搭配
+            context_match = re.search(r'\*\*7\.\s*语境[与和]?搭配\*\*[\s\S]*?([\s\S]*?)(?=\n\*\*8\.|$)', content, re.IGNORECASE)
+            if context_match:
+                context_text = context_match.group(1)
+                examples_match2 = re.search(r'高频搭配[^：:]*[：:]\s*(.+?)(?:\n|$)', context_text, re.IGNORECASE)
+                sentence_match = re.search(r'造句[^：:]*[：:]\s*(.+?)(?:\n|$)', context_text, re.IGNORECASE)
+
+                if examples_match2 and not result['examples']:
+                    result['examples'] = [w.strip() for w in re.split(r'[、，,]', examples_match2.group(1)) if w.strip()]
+                if sentence_match:
+                    result['examples'].append(sentence_match.group(1).strip())
+
+            # 8. 解析记忆方案设计
+            memory_script_match = re.search(r'\*\*8\.\s*记忆方案设计\*\*[\s\S]*?([\s\S]*?)(?=\n\*\*9\.|$)', content, re.IGNORECASE)
+            if memory_script_match:
+                lines = [line.strip() for line in memory_script_match.group(1).strip().split('\n')]
+                result['memoryScript'] = '\n'.join([line.replace('- ', '', 1) for line in lines if line.startswith('-')])
+
+            # 9. 解析一句话总结
+            summary_match = re.search(r'\*\*9\.\s*一句话总结\*\*[\s\S]*?-\s*(.+?)(?:\n|$)', content, re.IGNORECASE)
+            if summary_match:
+                result['summary'] = summary_match.group(1).strip()
+
+        except Exception as e:
+            print(f"解析错误: {e}")
+
+        return result
+
+    @action(detail=False, methods=['get'], url_path='default-prompt')
+    def get_default_prompt(self, request):
+        """获取默认的汉字提示词模板"""
+        from .services.ai_service import AIService
+
+        default_prompt = AIService.get_default_chinese_prompt()
+
+        return Response({
+            'prompt': default_prompt,
+            'description': '默认汉字学习卡片生成提示词。使用{char}作为汉字占位符，使用{context}作为额外信息占位符。'
+        })
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def ai_summarize_view(request):
+    """AI总结词汇"""
+    serializer = AISummarizeRequestSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    # 获取用户的AI配置
+    try:
+        config = AIConfig.objects.get(user=request.user)
+    except AIConfig.DoesNotExist:
+        return Response(
+            {'error': '请先配置AI设置'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    if not config.enabled:
+        return Response(
+            {'error': 'AI功能未启用'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    api_key = config.get_api_key()
+    if not api_key:
+        return Response(
+            {'error': '未配置API Key'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    try:
+        from .services.ai_service import AIService
+        ai_service = AIService(config)
+
+        word = serializer.validated_data['word']
+        card_type = serializer.validated_data['card_type']
+        context = serializer.validated_data.get('context', '')
+
+        summary = ai_service.summarize_word(word, card_type, context)
+
+        return Response({
+            'word': word,
+            'summary': summary,
+            'model': config.model_name
+        })
+    except Exception as e:
+        return Response(
+            {'error': f'AI总结失败: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
 

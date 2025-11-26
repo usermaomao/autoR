@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
-from .models import Deck, Card, ReviewLog
+from .models import Deck, Card, ReviewLog, AIConfig
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -131,4 +131,72 @@ class CardExportSerializer(serializers.Serializer):
         required=False,
         allow_null=True,
         help_text='卡组ID（可选，不指定则导出所有）'
+    )
+
+
+class AIConfigSerializer(serializers.ModelSerializer):
+    """AI配置序列化器"""
+    api_key = serializers.CharField(
+        write_only=True,
+        required=False,
+        allow_blank=True,
+        help_text='API Key (仅写入，不会返回)'
+    )
+    has_api_key = serializers.SerializerMethodField(read_only=True)
+
+    class Meta:
+        model = AIConfig
+        fields = (
+            'id', 'provider', 'base_url', 'model_name', 'api_key',
+            'has_api_key', 'enabled', 'auto_summarize',
+            'temperature', 'max_tokens', 'custom_chinese_prompt',
+            'created_at', 'updated_at'
+        )
+        read_only_fields = ('id', 'created_at', 'updated_at', 'has_api_key')
+
+    def get_has_api_key(self, obj):
+        """返回是否已配置API Key（不返回具体内容）"""
+        return bool(obj.encrypted_api_key)
+
+    def create(self, validated_data):
+        api_key = validated_data.pop('api_key', None)
+        user = self.context['request'].user
+
+        # 创建配置
+        config = AIConfig.objects.create(user=user, **validated_data)
+
+        # 设置API Key
+        if api_key:
+            config.set_api_key(api_key)
+            config.save()
+
+        return config
+
+    def update(self, instance, validated_data):
+        api_key = validated_data.pop('api_key', None)
+
+        # 更新其他字段
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+
+        # 更新API Key（如果提供）
+        if api_key is not None:
+            instance.set_api_key(api_key)
+
+        instance.save()
+        return instance
+
+
+class AISummarizeRequestSerializer(serializers.Serializer):
+    """AI总结请求序列化器"""
+    word = serializers.CharField(required=True, help_text='要总结的单词/汉字')
+    card_type = serializers.ChoiceField(
+        choices=['en', 'zh'],
+        required=True,
+        help_text='卡片类型'
+    )
+    context = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text='额外上下文信息'
     )

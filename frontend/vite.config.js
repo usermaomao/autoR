@@ -15,7 +15,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://172.17.33.11:8000',  // 指向后端的局域网地址
+        target: 'http://localhost:8000',  // 修复为localhost
         changeOrigin: true,
       }
     }

@@ -17,6 +17,21 @@
     <div class="max-w-7xl mx-auto px-4 py-8">
       <h1 class="text-3xl font-bold mb-8">卡片管理</h1>
 
+      <!-- 成功消息提示 -->
+      <div v-if="successMessage" class="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg flex justify-between items-center">
+        <div class="flex items-center gap-2">
+          <svg class="w-5 h-5 text-green-600" fill="currentColor" viewBox="0 0 20 20">
+            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+          </svg>
+          <span class="text-green-800">{{ successMessage }}</span>
+        </div>
+        <button @click="successMessage = ''" class="text-green-600 hover:text-green-800">
+          <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+            <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
+          </svg>
+        </button>
+      </div>
+
       <!-- 筛选和搜索 -->
       <div class="bg-white rounded-lg shadow p-6 mb-6">
         <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -105,7 +120,10 @@
                 <th class="px-4 py-3 text-left text-sm font-medium text-gray-700">释义</th>
                 <th class="px-4 py-3 text-left text-sm font-medium text-gray-700">卡组</th>
                 <th class="px-4 py-3 text-left text-sm font-medium text-gray-700">难度系数</th>
-                <th class="px-4 py-3 text-left text-sm font-medium text-gray-700">下次复习</th>
+                <th class="px-4 py-3 text-left text-sm font-medium text-gray-700">
+                  下次复习
+                  <span class="text-xs text-gray-500">(悬停查看时间轴)</span>
+                </th>
                 <th class="px-4 py-3 text-left text-sm font-medium text-gray-700">操作</th>
               </tr>
             </thead>
@@ -130,7 +148,16 @@
                 <td class="px-4 py-3 text-sm text-gray-600 truncate max-w-xs">{{ card.meaning }}</td>
                 <td class="px-4 py-3 text-sm">{{ getDeckName(card.deck) }}</td>
                 <td class="px-4 py-3 text-sm">{{ card.ef.toFixed(2) }}</td>
-                <td class="px-4 py-3 text-sm">{{ formatDueDate(card.due_at) }}</td>
+                <td class="px-4 py-3 text-sm">
+                  <div
+                    class="flex items-center gap-1 cursor-help"
+                    @mouseenter="showTooltip(card, $event)"
+                    @mouseleave="hideTooltip"
+                  >
+                    <span>{{ formatDueDate(card.due_at) }}</span>
+                    <span class="text-gray-400 text-xs">ℹ️</span>
+                  </div>
+                </td>
                 <td class="px-4 py-3">
                   <div class="flex gap-2">
                     <button @click="handleEdit(card)" class="text-blue-600 hover:text-blue-800">编辑</button>
@@ -253,19 +280,84 @@
       </div>
     </div>
   </div>
+
+  <!-- Teleport Tooltip: 复习时间轴 (渲染到 body，避免被表格 overflow 截断) -->
+  <Teleport to="body">
+    <div
+      v-if="tooltipCard"
+      class="fixed bg-gray-900 text-white text-xs rounded-lg shadow-2xl p-3 w-80 max-h-96 overflow-y-auto z-[9999]"
+      :style="{ left: tooltipPosition.x + 'px', top: tooltipPosition.y + 'px' }"
+    >
+      <div class="font-semibold mb-2 border-b border-gray-700 pb-2">
+        📅 复习时间轴预测
+        <span class="text-gray-400 ml-1">(基于SM-2算法)</span>
+      </div>
+
+      <div class="space-y-1.5">
+        <!-- 当前状态 -->
+        <div class="flex justify-between text-yellow-300">
+          <span>📍 当前状态:</span>
+          <span class="font-mono">{{ getCardStateText(tooltipCard.state) }}</span>
+        </div>
+
+        <!-- 当前间隔 -->
+        <div class="flex justify-between">
+          <span>⏱️ 当前间隔:</span>
+          <span class="font-mono">{{ tooltipCard.interval }} 天</span>
+        </div>
+
+        <!-- 易忘因子 -->
+        <div class="flex justify-between">
+          <span>🎯 难度系数 (EF):</span>
+          <span class="font-mono">{{ tooltipCard.ef.toFixed(2) }}</span>
+        </div>
+
+        <!-- 错误次数 -->
+        <div v-if="tooltipCard.lapses > 0" class="flex justify-between text-red-300">
+          <span>❌ 错误次数:</span>
+          <span class="font-mono">{{ tooltipCard.lapses }} 次</span>
+        </div>
+
+        <div class="border-t border-gray-700 my-2"></div>
+
+        <!-- 未来复习时间点预测 -->
+        <div class="font-semibold mb-1">🔮 未来复习时间点:</div>
+        <div
+          v-for="(review, index) in predictFutureReviews(tooltipCard)"
+          :key="index"
+          class="flex justify-between pl-2"
+          :class="index === 0 ? 'text-green-300' : 'text-gray-300'"
+        >
+          <span>第 {{ index + 1 }} 次:</span>
+          <span class="font-mono">{{ review.date }} ({{ review.interval }}天)</span>
+        </div>
+
+        <div class="text-gray-400 text-xs mt-2 italic">
+          * 预测假设每次评分为"Good"(4分)
+        </div>
+      </div>
+    </div>
+  </Teleport>
 </template>
 
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import axios from 'axios'
+import { formatDueTime } from '@/utils/timeFormatter'
 
 const router = useRouter()
+const route = useRoute()
 
 const cards = ref([])
 const decks = ref([])
 const selectedCards = ref([])
 const isLoading = ref(false)
+const successMessage = ref('')
+
+// Tooltip 状态
+const tooltipCard = ref(null)
+const tooltipPosition = reactive({ x: 0, y: 0 })
 
 // 批量操作相关状态
 const showBatchMoveDialog = ref(false)
@@ -289,6 +381,15 @@ const pageSize = 20
 
 // 加载卡组列表
 onMounted(async () => {
+  // 检查是否有成功消息
+  if (route.query.successMessage) {
+    successMessage.value = route.query.successMessage
+    // 3秒后自动关闭消息
+    setTimeout(() => {
+      successMessage.value = ''
+    }, 5000)
+  }
+
   await loadDecks()
   await loadCards()
 })
@@ -547,21 +648,110 @@ function getDeckName(deckId) {
   return deck ? deck.name : '-'
 }
 
-// 格式化到期时间
-function formatDueDate(dueAt) {
-  const date = new Date(dueAt)
-  const now = new Date()
-  const diffMs = date - now
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
-
-  if (diffDays < 0) {
-    return `逾期 ${Math.abs(diffDays)} 天`
-  } else if (diffDays === 0) {
-    return '今天'
-  } else if (diffDays === 1) {
-    return '明天'
-  } else {
-    return `${diffDays} 天后`
+// 获取卡片状态文本
+function getCardStateText(state) {
+  const stateMap = {
+    'new': '新卡片',
+    'learning': '学习中',
+    'review': '复习中'
   }
+  return stateMap[state] || state
+}
+
+// 预测未来复习时间点（基于SM-2算法）
+function predictFutureReviews(card, count = 5) {
+  const reviews = []
+
+  // 从当前due_at开始预测
+  let currentDate = new Date(card.due_at)
+  let currentInterval = card.interval
+  let currentEf = card.ef
+
+  // 如果是9999-12-31（未安排），从今天开始
+  if (currentDate.getFullYear() === 9999) {
+    currentDate = new Date()
+    currentInterval = 0
+  }
+
+  for (let i = 0; i < count; i++) {
+    // 计算下一次间隔（假设评分为Good=4）
+    let nextInterval
+
+    if (currentInterval === 0) {
+      nextInterval = 1  // 第一次复习: 1天
+    } else if (currentInterval === 1) {
+      nextInterval = 6  // 第二次复习: 6天
+    } else {
+      // 后续复习: interval × EF
+      nextInterval = Math.floor(currentInterval * currentEf)
+    }
+
+    // 计算下一次复习日期
+    const nextDate = new Date(currentDate)
+    nextDate.setDate(nextDate.getDate() + nextInterval)
+
+    // 格式化日期
+    const year = nextDate.getFullYear()
+    const month = String(nextDate.getMonth() + 1).padStart(2, '0')
+    const day = String(nextDate.getDate()).padStart(2, '0')
+
+    reviews.push({
+      date: `${year}-${month}-${day}`,
+      interval: nextInterval
+    })
+
+    // 更新状态为下一次预测
+    currentDate = nextDate
+    currentInterval = nextInterval
+
+    // EF在Good评分(4)下的变化: EF' = EF + (0.1 - (5-4) * (0.08 + (5-4) * 0.02))
+    // = EF + (0.1 - 0.1) = EF (保持不变)
+    // 所以Good评分下EF不变
+  }
+
+  return reviews
+}
+
+// 格式化到期时间 - 使用工具函数（当天显示小时，否则显示天数）
+function formatDueDate(dueAt) {
+  return formatDueTime(dueAt)
+}
+
+// 显示 Tooltip
+function showTooltip(card, event) {
+  tooltipCard.value = card
+
+  const target = event.currentTarget
+  const rect = target.getBoundingClientRect()
+  const tooltipWidth = 320 // w-80 = 320px
+  const tooltipHeight = 384 // max-h-96 = 384px
+  const gap = 8 // mb-2
+
+  // 计算水平位置（居中对齐触发元素）
+  let x = rect.left + (rect.width / 2) - (tooltipWidth / 2)
+
+  // 防止左侧超出视口
+  if (x < 10) x = 10
+
+  // 防止右侧超出视口
+  if (x + tooltipWidth > window.innerWidth - 10) {
+    x = window.innerWidth - tooltipWidth - 10
+  }
+
+  // 计算垂直位置（显示在上方）
+  let y = rect.top - tooltipHeight - gap
+
+  // 如果上方空间不足，显示在下方
+  if (y < 10) {
+    y = rect.bottom + gap
+  }
+
+  tooltipPosition.x = x
+  tooltipPosition.y = y
+}
+
+// 隐藏 Tooltip
+function hideTooltip() {
+  tooltipCard.value = null
 }
 </script>

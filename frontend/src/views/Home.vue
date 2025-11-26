@@ -57,6 +57,16 @@
           <h2 class="text-2xl font-bold mb-2">学习统计</h2>
           <p class="text-purple-100">查看学习进度和数据</p>
         </router-link>
+
+        <!-- AI助手设置 -->
+        <router-link
+          to="/ai-settings"
+          class="bg-gradient-to-br from-orange-500 to-orange-700 rounded-xl shadow-lg p-8 text-white hover:shadow-xl transition-shadow"
+        >
+          <div class="text-5xl mb-4">🤖</div>
+          <h2 class="text-2xl font-bold mb-2">AI助手</h2>
+          <p class="text-orange-100">配置AI学习辅助</p>
+        </router-link>
       </div>
 
       <!-- 快速统计 -->

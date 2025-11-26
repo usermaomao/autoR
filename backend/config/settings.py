@@ -150,9 +150,12 @@ CORS_ALLOW_CREDENTIALS = True
 CSRF_TRUSTED_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
+    "http://localhost:5174",  # Vite备用端口
+    "http://127.0.0.1:5174",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     "http://172.17.33.11:5173",  # WSL network IP
+    "http://172.17.33.11:5174",
 ]
 
 # SESSION settings - 允许跨域 session
