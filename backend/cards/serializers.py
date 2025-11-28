@@ -1,6 +1,8 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
 from .models import Deck, Card, ReviewLog, AIConfig
+from .services.svg_generator import generate_svg_card
+from datetime import datetime
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -58,9 +60,44 @@ class CardSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = ('id', 'user', 'created_at', 'updated_at')
 
+    def _generate_and_attach_svg(self, instance):
+        """生成并附加 SVG 到 metadata"""
+        try:
+            svg_front, svg_back = generate_svg_card(
+                word=instance.word,
+                card_type=instance.card_type,
+                metadata=instance.metadata
+            )
+
+            # 更新 metadata
+            if not instance.metadata:
+                instance.metadata = {}
+
+            instance.metadata['svg_front'] = svg_front
+            instance.metadata['svg_back'] = svg_back
+            instance.metadata['svg_generated_at'] = datetime.now().isoformat()
+            instance.metadata['svg_version'] = 'v1'
+
+            instance.save(update_fields=['metadata'])
+        except Exception as e:
+            # SVG 生成失败不影响卡片保存
+            print(f"SVG generation failed for card {instance.id}: {e}")
+
+    def create(self, validated_data):
+        """创建卡片时自动生成 SVG"""
+        instance = super().create(validated_data)
+        self._generate_and_attach_svg(instance)
+        return instance
+
+    def update(self, instance, validated_data):
+        """更新卡片时重新生成 SVG"""
+        instance = super().update(instance, validated_data)
+        self._generate_and_attach_svg(instance)
+        return instance
+
 
 class CardListSerializer(serializers.ModelSerializer):
-    """卡片列表序列化器（简化版）"""
+    """卡片列表序列化器（简化版，包含复习所需的 metadata）"""
     deck_name = serializers.CharField(source='deck.name', read_only=True)
     card_type_display = serializers.CharField(source='get_card_type_display', read_only=True)
     state_display = serializers.CharField(source='get_state_display', read_only=True)
@@ -69,7 +106,7 @@ class CardListSerializer(serializers.ModelSerializer):
         model = Card
         fields = ('id', 'word', 'card_type', 'card_type_display', 'state',
                   'state_display', 'deck', 'deck_name', 'ef', 'interval',
-                  'lapses', 'due_at', 'created_at')
+                  'lapses', 'due_at', 'created_at', 'metadata', 'notes', 'tags')
 
 
 class ReviewLogSerializer(serializers.ModelSerializer):

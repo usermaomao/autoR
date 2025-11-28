@@ -83,8 +83,8 @@ def get_next_learning_step(card, quality: int) -> Tuple[timedelta, str]:
 
 
 def generate_review_queue(user, limit: int = 50):
-    """
-    生成复习队列
+    """生成复习队列
+
     优先级: 到期卡片 > 难项 > 新卡
 
     Args:
@@ -99,11 +99,13 @@ def generate_review_queue(user, limit: int = 50):
                 'leech_count': 难项卡片数,
                 'new_count': 新卡片数,
                 'total_new': 总新卡数,
+                'session_limit': 本次会话最大卡片数,
+                'returned_count': 实际返回卡片数,
                 'message': 提示信息
             }
         }
     """
-    from cards.models import Card
+    from cards.models import Card, Deck
 
     now = timezone.now()
 
@@ -111,7 +113,7 @@ def generate_review_queue(user, limit: int = 50):
     due_cards = Card.objects.filter(
         user=user,
         state__in=['learning', 'review'],
-        due_at__lte=now
+        due_at__lte=now,
     ).order_by('due_at', '-lapses')[:limit]
 
     due_card_ids = list(due_cards.values_list('id', flat=True))
@@ -120,37 +122,36 @@ def generate_review_queue(user, limit: int = 50):
     # 2. 难项优先（lapses >= 3）
     leech_cards = Card.objects.filter(
         user=user,
-        lapses__gte=3
+        lapses__gte=3,
     ).exclude(id__in=due_card_ids).order_by('-lapses')[:10]
 
     leech_card_ids = list(leech_cards.values_list('id', flat=True))
     leech_count = len(leech_card_ids)
 
     # 3. 新卡（根据配置的每日新卡限制）
-    # 获取用户的默认卡组配置
-    from cards.models import Deck
     try:
         default_deck = Deck.objects.filter(user=user).first()
         daily_new_limit = default_deck.daily_new_limit if default_deck else 20
-    except:
+    except Exception:
         daily_new_limit = 20
 
     # 统计总新卡数
     total_new_cards = Card.objects.filter(user=user, state='new').count()
 
-    new_cards = Card.objects.filter(
-        user=user,
-        state='new'
-    ).exclude(
-        id__in=due_card_ids + leech_card_ids
-    ).order_by('created_at')[:daily_new_limit]
+    new_cards = (
+        Card.objects.filter(user=user, state='new')
+        .exclude(id__in=due_card_ids + leech_card_ids)
+        .order_by('created_at')[:daily_new_limit]
+    )
 
     new_count = new_cards.count()
 
     # 合并所有卡片（保持优先级顺序）
-    all_card_ids = list(due_cards.values_list('id', flat=True)) + \
-                   list(leech_cards.values_list('id', flat=True)) + \
-                   list(new_cards.values_list('id', flat=True))
+    all_card_ids = (
+        list(due_cards.values_list('id', flat=True))
+        + list(leech_cards.values_list('id', flat=True))
+        + list(new_cards.values_list('id', flat=True))
+    )
 
     # 使用 in_bulk 保持顺序
     cards = Card.objects.filter(id__in=all_card_ids).select_related('deck', 'user')
@@ -159,9 +160,12 @@ def generate_review_queue(user, limit: int = 50):
     card_dict = {card.id: card for card in cards}
     ordered_cards = [card_dict[card_id] for card_id in all_card_ids if card_id in card_dict]
 
+    # 最终返回的卡片列表（再次受 limit 约束）
+    final_cards = ordered_cards[:limit]
+
     # 生成提示信息
     message = ''
-    if not ordered_cards:
+    if not final_cards:
         if total_new_cards == 0:
             message = '恭喜!你已经完成了所有复习,且没有新卡片需要学习。'
         else:
@@ -177,15 +181,49 @@ def generate_review_queue(user, limit: int = 50):
         message = f'本次复习: {", ".join(parts)}'
 
     return {
-        'cards': ordered_cards[:limit],
+        'cards': final_cards,
         'stats': {
             'due_count': due_count,
             'leech_count': leech_count,
             'new_count': new_count,
             'total_new': total_new_cards,
-            'message': message
-        }
+            'session_limit': limit,
+            'returned_count': len(final_cards),
+            'message': message,
+        },
     }
+
+
+def get_lowest_mastery_cards(user, limit: int = 10):
+    """
+    获取掌握度最低的卡片（用于无待复习卡片时的练习）
+
+    掌握度评估标准：
+    1. 优先选择错误次数多的卡片（lapses）
+    2. 其次选择易忘因子低的卡片（ef 值低）
+    3. 排除完全未学习的新卡（state='new'）
+
+    Args:
+        user: User 对象
+        limit: 返回卡片数量限制
+
+    Returns:
+        Card 对象列表
+    """
+    from cards.models import Card
+
+    # 查询已学习过的卡片（排除 state='new'）
+    # 按错误次数降序、易忘因子升序排序
+    cards = Card.objects.filter(
+        user=user,
+        state__in=['learning', 'review']  # 只包括已学习的卡片
+    ).order_by(
+        '-lapses',  # 错误次数多的排前面
+        'ef',       # 易忘因子低的排前面
+        '-interval' # 间隔短的排前面（说明掌握不牢固）
+    ).select_related('deck', 'user')[:limit]
+
+    return list(cards)
 
 
 def mark_leech(card) -> bool:

@@ -206,6 +206,25 @@
             </div>
           </div>
 
+          <!-- SVG 卡片预览 -->
+          <div v-if="svgPreview" class="mb-6 p-4 rounded-lg bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-200">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="text-lg font-semibold text-blue-900">🎨 SVG 卡片预览</h3>
+              <span v-if="isGeneratingSVG" class="text-sm text-blue-600">生成中...</span>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div class="bg-white rounded-lg p-3 shadow-sm">
+                <p class="text-xs font-medium text-gray-600 mb-2 text-center">正面（识记）</p>
+                <SVGCard :svgContent="svgPreview.front" :width="800" :height="500" />
+              </div>
+              <div class="bg-white rounded-lg p-3 shadow-sm">
+                <p class="text-xs font-medium text-gray-600 mb-2 text-center">反面（应用）</p>
+                <SVGCard :svgContent="svgPreview.back" :width="800" :height="500" />
+              </div>
+            </div>
+            <p class="text-xs text-blue-700 mt-3 text-center">💡 保存卡片后,复习时可在 SVG/文字模式间切换</p>
+          </div>
+
           <!-- 错误提示 -->
           <div v-if="error" class="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">
             {{ error }}
@@ -291,6 +310,7 @@ import { useRouter, useRoute } from 'vue-router'
 import axios from 'axios'
 import { lookupWord } from '@/services/dictService'
 import { formatDueTime } from '@/utils/timeFormatter'
+import SVGCard from '@/components/SVGCard.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -322,6 +342,10 @@ const error = ref('')
 const isGeneratingAI = ref(false)
 const aiError = ref('')
 const showFullAIContent = ref(false)  // 新增：控制AI内容展开/收起
+
+// SVG 预览相关状态
+const svgPreview = ref(null)
+const isGeneratingSVG = ref(false)
 
 // 快速创建卡组相关状态
 const showQuickCreateDeck = ref(false)
@@ -808,6 +832,9 @@ async function generateAIMemoryCard() {
           examples: parsed.examples
         }
       }
+
+      // 🆕 自动生成 SVG 预览
+      await generateSVGPreview()
     }
   } catch (err) {
     console.error('Failed to generate AI memory card:', err)
@@ -829,6 +856,33 @@ async function generateAIMemoryCard() {
     }
   } finally {
     isGeneratingAI.value = false
+  }
+}
+
+// 生成 SVG 预览
+async function generateSVGPreview() {
+  if (!form.word || !form.card_type) {
+    return
+  }
+
+  isGeneratingSVG.value = true
+
+  try {
+    const response = await axios.post('/api/cards/preview_svg/', {
+      word: form.word,
+      card_type: form.card_type,
+      metadata: form.metadata
+    })
+
+    svgPreview.value = {
+      front: response.data.svg_front,
+      back: response.data.svg_back
+    }
+  } catch (err) {
+    console.error('Failed to generate SVG preview:', err)
+    // SVG 预览失败不影响用户继续操作,静默处理
+  } finally {
+    isGeneratingSVG.value = false
   }
 }
 

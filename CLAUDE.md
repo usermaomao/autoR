@@ -156,6 +156,7 @@ npm run preview
   - `calculate_ef()` - Calculate easiness factor using SM-2 formula
   - `undo_review()` - Restore card to previous state
 - `baidu_hanyu.py` - Chinese character lookup service
+- `svg_generator.py` - SVG card generation for visual flashcards
 
 **API Endpoints** (`cards/urls.py`):
 - Authentication: `/api/auth/register/`, `/api/auth/login/`, `/api/auth/logout/`, `/api/auth/me/`
@@ -180,6 +181,8 @@ npm run preview
 - `Review.vue` - Flashcard review interface with keyboard shortcuts
 - `CardForm.vue` - Card creation with auto-complete from dictionary APIs
 - `Stats.vue` - Learning statistics and progress visualization
+- `FlashCard.vue` - Interactive flashcard component with flip animation
+- `SVGCard.vue` - SVG-based card rendering component
 
 ### SM-2 Algorithm Implementation
 
@@ -233,7 +236,9 @@ The core review algorithm is in `backend/cards/services/sm2.py`:
 
 **Backend Tests**:
 - SM-2 algorithm tests: `backend/cards/test_sm2.py`
-- API integration tests: `backend/test_dict_api.py`, `backend/test_bug_fixes.py`
+- API integration tests: `backend/test_dict_api.py`, `backend/test_bug_fixes.py`, `backend/test_integration.py`
+- Import/export tests: `backend/test_import_export.py`
+- SVG generator tests: `backend/test_svg_generator.py`
 
 **Coverage Requirements**:
 - Default target: 85% (as per global AGENTS.md rules)
@@ -254,11 +259,10 @@ pytest cards/test_sm2.py::test_calculate_ef -v
 
 ## Data Sources & Auto-complete
 
-**Four-layer fallback strategy** (L1 → L4):
-1. **IndexedDB Cache** (frontend, not yet implemented in v2.0)
-2. **Local ECDICT** (770K English words, imported to SQLite)
-3. **Online APIs** (dictionaryapi.dev for English, Baidu Hanyu for Chinese)
-4. **Manual Input** (fallback when all sources fail)
+**Three-layer fallback strategy**:
+1. **Local ECDICT** (770K English words, imported to SQLite)
+2. **Online APIs** (dictionaryapi.dev for English, Baidu Hanyu for Chinese)
+3. **Manual Input** (fallback when all sources fail)
 
 **Auto-complete Fields**:
 - English: IPA, POS, meaning, examples, audio URL, CEFR level
@@ -290,12 +294,12 @@ python3 manage.py migrate
 
 Based on git status:
 - Modified files suggest ongoing work on:
-  - SM-2 algorithm refinement (`cards/services/sm2.py`)
-  - Card due date handling (`cards/models.py`)
-  - Card form UI (`frontend/src/views/CardForm.vue`)
-  - Settings configuration (`backend/config/settings.py`)
+  - SVG card generation (`cards/services/svg_generator.py`)
+  - Card serializers (`cards/serializers.py`)
+  - Card views (`cards/views.py`)
+  - Card form UI (`frontend/src/views/CardForm.vue`, `frontend/src/components/FlashCard.vue`, `frontend/src/components/SVGCard.vue`)
 
-**PWA Features** (planned but not yet implemented):
+**PWA Features** (planned but not yet fully implemented):
 - Service Worker for offline support
 - IndexedDB caching layer (L1)
 - Background sync for review data
@@ -328,5 +332,6 @@ Based on git status:
 - Vue 3.5 + vue-router + pinia
 - axios (HTTP client)
 - chart.js (statistics visualization)
+- papaparse (CSV parsing)
 - tailwindcss 3.4 (styling)
 - vite 7.2 (build tool)

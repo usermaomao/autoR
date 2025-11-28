@@ -109,7 +109,7 @@ class TestQueueGeneration:
     """测试队列生成"""
 
     def test_generates_queue_for_user(self, user, deck):
-        """测试为用户生成复习队列"""
+        """测试为用户生成复习队列，并返回统计信息"""
         # 创建一些卡片
         for i in range(5):
             Card.objects.create(
@@ -117,12 +117,24 @@ class TestQueueGeneration:
                 deck=deck,
                 word=f'word{i}',
                 card_type='en',
-                state='new'
+                state='new',
             )
 
-        queue = generate_review_queue(user, limit=10)
-        assert len(queue) <= 10
-        assert all(c.user == user for c in queue)
+        result = generate_review_queue(user, limit=10)
+
+        # 基本结构
+        assert 'cards' in result
+        assert 'stats' in result
+
+        cards = result['cards']
+        stats = result['stats']
+
+        assert len(cards) <= 10
+        assert all(c.user == user for c in cards)
+
+        # 新增的 session 统计字段
+        assert stats['session_limit'] == 10
+        assert stats['returned_count'] == len(cards)
 
     def test_prioritizes_due_cards(self, user, deck):
         """测试优先返回到期卡片"""
@@ -133,20 +145,23 @@ class TestQueueGeneration:
             word='due',
             card_type='en',
             state='review',
-            due_at=timezone.now() - timedelta(days=1)
+            due_at=timezone.now() - timedelta(days=1),
         )
 
         # 创建新卡
-        new_card = Card.objects.create(
+        Card.objects.create(
             user=user,
             deck=deck,
             word='new',
             card_type='en',
-            state='new'
+            state='new',
         )
 
-        queue = generate_review_queue(user, limit=10)
-        assert queue[0].id == due_card.id  # 到期卡片在前
+        result = generate_review_queue(user, limit=10)
+        cards = result['cards']
+
+        assert cards  # 至少有一张卡片
+        assert cards[0].id == due_card.id  # 到期卡片在前
 
 
 class TestMarkLeech:

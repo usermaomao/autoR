@@ -190,6 +190,47 @@ class CardViewSet(viewsets.ModelViewSet):
             'streak': streak
         })
 
+    @action(detail=False, methods=['post'])
+    def preview_svg(self, request):
+        """预览 SVG 卡片（不保存到数据库）"""
+        from .services.svg_generator import generate_svg_card
+
+        # 提取请求数据
+        word = request.data.get('word')
+        card_type = request.data.get('card_type')
+        metadata = request.data.get('metadata', {})
+
+        # 验证必填字段
+        if not word or not card_type:
+            return Response({
+                'error': '缺少必填字段: word 或 card_type'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        if card_type not in ['en', 'zh']:
+            return Response({
+                'error': 'card_type 必须是 "en" 或 "zh"'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            # 生成 SVG
+            svg_front, svg_back = generate_svg_card(
+                word=word,
+                card_type=card_type,
+                metadata=metadata
+            )
+
+            return Response({
+                'svg_front': svg_front,
+                'svg_back': svg_back,
+                'word': word,
+                'card_type': card_type
+            })
+
+        except Exception as e:
+            return Response({
+                'error': f'SVG 生成失败: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 class ReviewLogViewSet(viewsets.ReadOnlyModelViewSet):
     """复习记录 ViewSet（只读）"""
@@ -208,17 +249,45 @@ class ReviewLogViewSet(viewsets.ReadOnlyModelViewSet):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def get_review_queue(request):
-    """获取复习队列"""
-    from .services.sm2 import generate_review_queue
+    """
+    获取复习队列
+
+    如果有待复习卡片，返回正常的复习队列
+    如果没有待复习卡片，返回掌握度最低的 10 张卡片用于巩固练习
+    """
+    from .services.sm2 import generate_review_queue, get_lowest_mastery_cards
 
     limit = int(request.query_params.get('limit', 50))
     result = generate_review_queue(request.user, limit)
+
+    # 如果没有待复习卡片，返回掌握度最低的卡片
+    if not result['cards']:
+        lowest_mastery_cards = get_lowest_mastery_cards(request.user, limit=10)
+
+        serializer = CardListSerializer(lowest_mastery_cards, many=True)
+        return Response({
+            'count': len(lowest_mastery_cards),
+            'cards': serializer.data,
+            'stats': {
+                'due_count': 0,
+                'leech_count': 0,
+                'new_count': 0,
+                'total_new': result['stats']['total_new'],
+                'session_limit': limit,
+                'returned_count': len(lowest_mastery_cards),
+                'message': '今日复习已完成！以下是掌握度最低的卡片，建议加强练习。',
+                'is_practice_mode': True,  # 标记为练习模式
+            },
+        })
 
     serializer = CardListSerializer(result['cards'], many=True)
     return Response({
         'count': len(result['cards']),
         'cards': serializer.data,
-        'stats': result['stats']
+        'stats': {
+            **result['stats'],
+            'is_practice_mode': False,  # 标记为正常复习模式
+        },
     })
 
 
